@@ -56,6 +56,14 @@ GRI_HD inline float matrix_value(std::size_t index, uint32_t seed) {
   return float(int(mix32(uint32_t(index) ^ seed) % 7U) - 3);
 }
 
+// Exact IEEE-like E4M3 encodings for this method's integer input subset only.
+// It deliberately does not claim a general FP32-to-FP8 quantizer.
+GRI_HD inline uint8_t fp8_e4m3_small_integer(int value) {
+  const auto magnitude = unsigned(value < 0 ? -value : value);
+  const uint8_t bits = magnitude == 0 ? 0x00 : (magnitude == 1 ? 0x38 : (magnitude == 2 ? 0x40 : 0x44));
+  return uint8_t(bits | (value < 0 ? 0x80 : 0));
+}
+
 inline double matrix_answer(int row, int column, int n, uint32_t seed) {
   int64_t sum = 0;
   for (int k = 0; k < n; ++k) {

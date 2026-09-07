@@ -186,9 +186,11 @@ type Result struct {
 
 var MethodChecks = map[string][]string{
 	"memory_integrity": {"B07", "A05"}, "fp32_gemm": {"C01", "B09"}, "bf16_gemm": {"C02", "B09"}, "tf32_gemm": {"C03", "B09"}, "hbm_copy": {"C05"}, "h2d": {"C07"}, "d2h": {"C07"}, "working_set": {"C06"}, "dispatch_latency": {"C08"},
+	"fp8_gemm": {"C04", "B09"}, "int8_gemm": {"C04", "B09"}, "numa_transfer": {"D10"},
 }
 var metricContracts = map[string][2]string{
 	"memory_integrity": {"pattern_fill_bandwidth", "GB/s"}, "fp32_gemm": {"fp32_dense_gemm", "TFLOP/s"}, "bf16_gemm": {"bf16_dense_gemm", "TFLOP/s"}, "tf32_gemm": {"tf32_dense_gemm", "TFLOP/s"}, "hbm_copy": {"hbm_effective_copy_bandwidth", "GB/s"}, "h2d": {"pinned_h2d", "GB/s"}, "d2h": {"pinned_d2h", "GB/s"}, "working_set": {"working_set_copy", "GB/s"}, "dispatch_latency": {"synchronized_dispatch_wall_latency", "us"},
+	"fp8_gemm": {"fp8_dense_gemm", "TFLOP/s"}, "int8_gemm": {"int8_dense_gemm", "TOP/s"}, "numa_transfer": {"numa_pinned_h2d", "GB/s"},
 }
 
 func finite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) && f >= 0 }
@@ -325,7 +327,7 @@ func (r Result) validateArithmetic() error {
 		case "memory_integrity":
 			bytes, _ := number(r.Coverage["allocated_bytes"])
 			expected = bytes / (r.Timings.EventSamples[i] * 1e6)
-		case "fp32_gemm", "bf16_gemm", "tf32_gemm":
+		case "fp32_gemm", "bf16_gemm", "tf32_gemm", "fp8_gemm", "int8_gemm":
 			operations, _ := number(r.Conditions["operations_per_gemm"])
 			if !equalNumber(r.Conditions["timed_gemms_per_sample"], 8) {
 				return errors.New("GEMM timed iteration count mismatch")
@@ -337,7 +339,7 @@ func (r Result) validateArithmetic() error {
 				return errors.New("HBM timed copy count mismatch")
 			}
 			expected = 2 * bytes * 8 / (r.Timings.EventSamples[i] * 1e6)
-		case "h2d", "d2h":
+		case "h2d", "d2h", "numa_transfer":
 			bytes, ok := number(r.Conditions["transfer_bytes"])
 			if !ok || bytes <= 0 || bytes > 256*(1<<20) || !equalNumber(r.Conditions["timed_transfers_per_sample"], 4) {
 				return errors.New("transfer size or iteration count mismatch")
@@ -413,6 +415,12 @@ func (r Result) validateConditions() error {
 		if !lOK || !bOK || l2 <= 0 || bytes < 2*l2 || 2*bytes > capBytes || c["copy_method"] != "gri-copy-kernel-v1" {
 			return errors.New("HBM copy does not establish an above-cache working set")
 		}
+	}
+	if r.Method == "fp8_gemm" || r.Method == "int8_gemm" {
+		return r.validateLowPrecision()
+	}
+	if r.Method == "numa_transfer" {
+		return r.validateNUMA()
 	}
 	if strings.HasSuffix(r.Method, "_gemm") {
 		expectedInput, expectedCompute, expectedMath := "fp32", "CUBLAS_COMPUTE_32F_PEDANTIC", "CUBLAS_PEDANTIC_MATH"
@@ -549,6 +557,10 @@ func (b *Binary) observations(q Request, base model.Observation, r Result, durat
 		base.Conditions["runtime_dependency_sha256"] = dependencyDigests
 	}
 	base.Status = map[string]model.Status{"ok": model.Pass, "unsupported": model.Unsupported, "blocked": model.NotTested, "test_error": model.ToolError, "mismatch": model.Fail, "budget_exhausted": model.TimeBudgetExhausted}[r.Status]
+	// An unavailable optional path provides no evidence about execution or
+	// correctness. Keep its primary scope and diagnostics explicit, without
+	// making that absence evidence against successfully measured core methods.
+	optionalAbsent := optionalMethodUnperformed(q.Method, r)
 	base.Message = fmt.Sprintf("%s: %s; %d checked values; %d observed mismatches (lower bound=%t); reproducible=%t", q.Method, r.Status, r.Correctness.CheckedValues, r.Correctness.MismatchCount, r.Correctness.CountIsLowerBound, r.Correctness.Reproducible)
 	if r.Metric != nil {
 		base.Value = r.Metric.Value
@@ -556,8 +568,16 @@ func (b *Binary) observations(q Request, base model.Observation, r Result, durat
 	}
 	var out []model.Observation
 	for _, id := range MethodChecks[q.Method] {
+		if optionalAbsent && id != MethodChecks[q.Method][0] {
+			continue
+		}
 		o := base
 		o.CheckID = id
+		if q.Method == "numa_transfer" && r.Status == "ok" {
+			o.Value = map[string]any{"local_node": r.Conditions["numa_local_node"], "remote_node": r.Conditions["numa_remote_node"], "submitting_cpu": r.Conditions["numa_cpu_core"], "local_median_gb_s": r.Coverage["local_median_gb_s"], "remote_median_gb_s": r.Coverage["remote_median_gb_s"], "local_over_remote_ratio": r.Coverage["local_over_remote_ratio"], "windows": r.Coverage["windows"]}
+			o.Unit = ""
+			o.Message = "Controlled H2D comparison of two allowed NUMA memory nodes with a fixed submitting CPU, verified placement of all owned host pages, and checked transferred contents; no calibrated penalty or independent topology claim."
+		}
 		out = append(out, o)
 	}
 	if q.Tier == "standard" && q.Method == "memory_integrity" && r.Status == "ok" && equalNumber(r.Coverage["completed_passes"], 8) {
@@ -571,11 +591,17 @@ func (b *Binary) observations(q Request, base model.Observation, r Result, durat
 	}
 	detail := base
 	detail.CheckID = "C12"
+	if optionalAbsent {
+		detail.CheckID = MethodChecks[q.Method][0]
+	}
 	detail.MethodID = q.Method + ".validation"
 	detail.Value = map[string]any{"timings": r.Timings, "coverage": r.Coverage, "correctness": r.Correctness, "samples": r.Samples, "errors": r.Errors, "limitations": r.Limitations}
 	detail.Unit = ""
 	out = append(out, detail)
 	for _, id := range []string{"A04", "H02", "B12"} {
+		if optionalAbsent {
+			continue
+		}
 		o := base
 		o.CheckID = id
 		o.MethodID = q.Method + ".execution"
@@ -610,6 +636,13 @@ func (b *Binary) observations(q Request, base model.Observation, r Result, durat
 		out = append(out, o)
 	}
 	return out, r.Status == "mismatch" || r.Status == "test_error" || r.Status == "budget_exhausted" || identityFailure(r)
+}
+
+func optionalMethodUnperformed(method string, r Result) bool {
+	optional := method == "fp8_gemm" || method == "int8_gemm" || method == "numa_transfer"
+	return optional && (r.Status == "unsupported" || r.Status == "blocked") &&
+		r.SampleCount == 0 && len(r.Samples) == 0 && !r.Correctness.Checked &&
+		r.Correctness.CheckedValues == 0 && r.Correctness.MismatchCount == 0 && !identityFailure(r)
 }
 
 func runtimeObservations(base model.Observation) []model.Observation {
@@ -669,7 +702,7 @@ func repeatObservations(base model.Observation, r Result) []model.Observation {
 	out := []model.Observation{stability}
 	// Mixed-size/stride samples and differing integrity patterns cannot be pooled
 	// as repeated measurements of one performance condition.
-	if r.Method == "working_set" || r.Method == "memory_integrity" {
+	if r.Method == "working_set" || r.Method == "memory_integrity" || r.Method == "numa_transfer" {
 		return out
 	}
 	values := map[string]any{"samples": r.Samples, "median": median(r.Samples), "mad": mad(r.Samples), "independent_allocations": 1, "sample_verified_offsets_ms": r.Timings.SampleVerifiedOffsets}

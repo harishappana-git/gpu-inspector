@@ -1,6 +1,10 @@
 # GPU Rental Inspector
 
+To test a real H100 server from Windows with automatic setup, execution, report retrieval and recovery, follow the [automated H100 setup guide](docs/H100_AUTOMATED_SETUP.md). After supplying the server connection once, run `./scripts/test-h100-server.cmd -Config ./h100-server.json`.
+
 Local Windows/RTX 5080 implementation results, measured scope and rerun commands are recorded in [Windows RTX 5080 validation](docs/WINDOWS_RTX5080_VALIDATION.md).
+
+The [H100 single-node guide and remaining checklist](docs/H100_SINGLE_NODE.md) cover the Linux build/run scripts, twelve Standard worker methods, selected-device Xid/DCGM diagnostics and signed OEM/driver advisory inputs.
 
 GPU Rental Inspector (`gri`) is a local development CLI for examining **one selected NVIDIA GPU allocation** and its visible execution environment. It implements the Phase 1 source workflow in [Design v2.0](GPU_Rental_Inspector_Design_v2_0.md): bounded collection, isolated CUDA-worker integration, explicit missing-data states, deterministic assessment, private local reports and support drafts. Optional bounded workspace and HTTPS-object checks cover the Phase 1B extension.
 
@@ -41,7 +45,7 @@ The UUID is a placeholder for the intended allocation. Numeric CUDA visibility m
 
 ### Native Windows and RTX 5080
 
-Windows x64 supports the existing CLI workflow: discovery and telemetry, bounded Quick/Standard scans, signed worker admission, all nine existing CUDA methods, cancellation, reports, verification, replay, export, local tickets, signing, cleanup and opted-in disk/HTTPS checks. The RTX 5080 worker targets SM120 and uses the card's reported capacity and cache size. Linux H100 builds retain SM90 and their separate qualification requirements. RTX results and references cannot stand in for H100 results.
+Windows x64 supports the existing CLI workflow: discovery and telemetry, bounded Quick/Standard scans, signed worker admission, eleven CUDA numerical methods including FP8/INT8, cancellation, reports, verification, replay, export, local tickets, signing, cleanup and opted-in disk/HTTPS checks. Standard also schedules a NUMA comparison that is explicitly unsupported on native Windows. The RTX 5080 worker targets SM120 and uses the card's reported capacity and cache size. Linux H100 builds retain SM90 and their separate qualification requirements. RTX results and references cannot stand in for H100 results.
 
 Build and try the CLI in PowerShell with Go on `PATH`:
 
@@ -72,9 +76,12 @@ Run a command with `--help` for its current argument contract.
 | `gri scan` | Observe one selected allocation, run available bounded methods and write local evidence. |
 | `gri demo --scenario clean\|ecc-error\|missing --output DIR` | Exercise the workflow using explicitly synthetic evidence. |
 | `gri catalog [--json]` | Show all design checks, including future, optional and currently unsupported checks. Catalog membership does not mean implementation or execution. |
+| `gri checklist --report DIR/report.json [--json] [--all]` | Verify an existing report and list remaining Phase 1 checks plus separate release gates. Synthetic and skipped Standard evidence cannot close acceptance work. |
 | `gri explain FINDING --report DIR/report.json` | Explain a finding and its action/verification guidance. |
 | `gri ticket draft --report DIR/report.json --provider generic` | Print a redacted local support draft; `--output FILE` writes a new file. No message is submitted. |
 | `gri verify --report-dir DIR` | Verify hashes, private permissions and the allowed evidence-file set. |
+| `gri import --archive FILE --output NEW_DIR [--json]` | Validate a bounded H100 campaign archive and regenerate a private local report index without executing downloaded content. |
+| `gri worker-validate --input FILE --device UUID --method METHOD --elapsed-ms N` | Validate retained worker JSON against the expected request; command success admits the protocol, not the GPU result. |
 | `gri export --report-dir DIR --output NEW_DIR` | Verify and regenerate a minimal redacted report/evidence bundle. |
 | `gri replay --report DIR/report.json --output NEW_DIR` | Verify retained evidence and reevaluate it with current rules into a linked new report, preserving the original interval. No new hardware work occurs. Optional `--reference` and `--reference-public-key` must be supplied together. |
 | `gri cleanup --report-dir DIR` | Verify ownership/integrity and remove known report artifacts. This does not terminate a rental or delete arbitrary directory contents. |
@@ -94,6 +101,8 @@ Run a command with `--help` for its current argument contract.
 | `--allow-unqualified-worker` | Development acceptance-test opt-in. It does not enable calibrated acceptance or promote the development worker to qualified status. |
 | `--allow-busy` | Explicit development opt-in to test a contended device, such as a WDDM desktop; primary performance evidence is contaminated and cannot support calibrated scoring. |
 | `--reference`, `--reference-public-key` | Signed healthy-reference envelope and trusted public key. No healthy pack is bundled. |
+| `--advisory`, `--advisory-public-key` | Standard only: local signed dated OEM/driver pack and explicit trust key; unknown or unmatched versions abstain. |
+| `--dcgm`, `--dcgm-budget-seconds` | Standard only: opt in to the selected-H100 DCGM 4.6.0 level-1 software suite on an existing local hostengine; default 40 seconds, range 5–60, inside the scan budget. |
 | `--price-per-hour`, `--currency` | Optional user-declared price context; no market feed or refund guarantee. |
 | `--max-temperature-c` | Optional user-selected safety ceiling, not a universal device-defect threshold. |
 | `--disk-test-bytes` | Standard-tier scratch-test opt-in requiring `--workspace`; cap 64 MiB. Zero disables it. |
@@ -131,13 +140,14 @@ make build-linux
 
 `make release-check` runs local software checks and builds only. It does not sign, publish, deploy, provision a GPU, acquire a reference or approve a release. CI is configured for Linux/macOS and native Windows Go tests, race detection, vet, CLI builds and CPU harnesses without GPU hardware; a configured workflow is not evidence of a passed remote run. Windows race detection needs a compatible GCC C toolchain in addition to Go; the MSVC CPU harness is a separate check.
 
-Some diagnostics remain absent beyond the unqualified CUDA implementation: no DCGM execution (`B11`), complete Xid-history collector (`B06`), FP8/INT8 worker (`C04`), controlled NUMA-transfer experiment (`D10`), versioned driver-advisory matcher (`H04`) or signed OEM/VBIOS comparison (`A10`) is implemented. Reported VBIOS text remains metadata, not a consistency pass. See the explicit gaps in [Implementation status](docs/IMPLEMENTATION_STATUS.md).
+The six previously absent adapters now have bounded development implementations: DCGM software diagnostics (`B11`), scan-interval kernel-journal Xid evidence (`B06`), FP8/INT8 workers (`C04`), controlled Linux NUMA transfers (`D10`), signed driver advisories (`H04`) and signed OEM/VBIOS matching (`A10`). Native Linux/H100 validation and trusted reference/advisory data remain necessary. Complete Xid history, live NVML event subscription, long vendor stress and production qualification are not claimed. See [H100 setup and remaining checklist](docs/H100_SINGLE_NODE.md).
 
 | Area | Source |
 | --- | --- |
 | CLI and scheduler | `cmd/gri`, `internal/scan` |
 | Evidence model and catalog | `internal/model`, `internal/catalog` |
 | Read-only NVIDIA/host adapters | `internal/collect` |
+| Selected Linux diagnostics and signed vendor assertions | `internal/diagnostics`, `internal/advisory` |
 | Process isolation and worker protocol | `internal/secureexec`, `internal/worker`, `worker` |
 | Signatures and reference matching | `internal/bundle`, `internal/reference` |
 | Assessment and local reports | `internal/rules`, `internal/report`, `internal/privatefs` |

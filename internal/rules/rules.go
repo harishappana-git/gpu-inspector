@@ -102,6 +102,14 @@ func relevant(r model.Report, id string) []model.Observation {
 		}
 		use := true
 		switch id {
+		case "A10":
+			use = o.MethodID == "advisory.oem_vbios"
+		case "H04":
+			use = o.MethodID == "advisory.driver_issue"
+		case "B06":
+			use = o.MethodID == "linux.xid_scan_interval" || o.MethodID == "scheduler.xid"
+		case "D10":
+			use = o.MethodID == "numa_transfer" || strings.HasPrefix(o.MethodID, "scheduler.")
 		case "A01", "A02", "A06", "A07", "A08":
 			use = strings.HasPrefix(o.MethodID, "guard.")
 		case "A04", "A05", "B07", "B08", "B09", "B12", "H02":
@@ -121,7 +129,7 @@ func relevant(r model.Report, id string) []model.Observation {
 }
 
 func activeWorkerCheck(id string) bool {
-	return strings.HasPrefix(id, "C") || id == "A04" || id == "A05" || id == "B07" || id == "B08" || id == "B09" || id == "B12" || id == "H02"
+	return strings.HasPrefix(id, "C") || id == "D10" || id == "A04" || id == "A05" || id == "B07" || id == "B08" || id == "B09" || id == "B12" || id == "H02"
 }
 
 type workerFailure struct {
@@ -134,7 +142,7 @@ type workerFailure struct {
 // only exact invocation identity; different starts/durations/methods/resources
 // remain separate events with separate findings and evidence references.
 func workerFailures(r model.Report) ([]workerFailure, map[string]bool) {
-	primary := map[string]string{"memory_integrity": "B07", "fp32_gemm": "B09", "bf16_gemm": "B09", "tf32_gemm": "B09", "hbm_copy": "C05", "h2d": "C07", "d2h": "C07", "working_set": "C06", "dispatch_latency": "C08"}
+	primary := map[string]string{"memory_integrity": "B07", "fp32_gemm": "B09", "bf16_gemm": "B09", "tf32_gemm": "B09", "int8_gemm": "C04", "fp8_gemm": "C04", "numa_transfer": "D10", "hbm_copy": "C05", "h2d": "C07", "d2h": "C07", "working_set": "C06", "dispatch_latency": "C08"}
 	checks := map[string]model.CheckResult{}
 	for _, c := range r.Checks {
 		checks[c.CheckID] = c
@@ -384,11 +392,26 @@ func Evaluate(r *model.Report, p *reference.Pack) {
 				cr.Reason = "Both FP32 and BF16 checked results are required."
 			}
 		}
-		if selected && c.ID == "A10" {
-			// Reading a version string cannot establish OEM/VBIOS consistency.
-			// No qualified signed OEM-comparison adapter exists in this release.
+		if selected && c.ID == "A10" && len(obs) == 0 {
 			cr.Status = model.NotTested
 			cr.Reason = "Reported VBIOS metadata is retained, but consistency against a qualified signed vendor/OEM reference has not been assessed."
+			for _, raw := range r.Observations {
+				if raw.CheckID == "A10" {
+					cr.EvidenceRefs = append(cr.EvidenceRefs, raw.ID)
+				}
+			}
+		}
+		if c.ID == "C04" && cr.Status == model.Pass {
+			formats := map[string]bool{}
+			for _, o := range obs {
+				if o.Status == model.Pass {
+					formats[o.MethodID] = true
+				}
+			}
+			if !formats["int8_gemm"] || !formats["fp8_gemm"] {
+				cr.Status = model.NotTested
+				cr.Reason = "Both separately checked INT8 and FP8 paths are required; architecture metadata alone is insufficient."
+			}
 		}
 		if cr.Required && cr.Status == model.NotApplicable {
 			allowed := c.ID == "A01" && r.ExpectedSKU == "" && len(obs) > 0
@@ -483,6 +506,8 @@ func Evaluate(r *model.Report, p *reference.Pack) {
 			add("check-"+c.CheckID, c.CheckID, severity, c.Reason, interpretation, action, refs)
 		} else if c.Status == model.Contaminated {
 			add("check-"+c.CheckID, c.CheckID, "WARNING", c.Reason, "This result is not eligible for a healthy-range conclusion.", "idle-and-retest", c.EvidenceRefs)
+		} else if c.Status == model.Warning && (c.CheckID == "B06" || c.CheckID == "B11" || c.CheckID == "H04") {
+			add("check-"+c.CheckID, c.CheckID, "WARNING", c.Reason, "Review this selected-device diagnostic or applicable advisory with its retained scope and sources. Neither a vendor symptom nor an advisory match independently establishes physical failure or a confirmed cause.", "collect-evidence", c.EvidenceRefs)
 		}
 	}
 	for _, o := range r.Observations {

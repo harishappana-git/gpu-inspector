@@ -1,5 +1,7 @@
 # Windows RTX 5080 implementation and local validation
 
+Later FP8/INT8 and twelve-method Standard scheduling work is recorded in the [H100 extension validation](H100_SINGLE_NODE.md#local-evidence-for-this-extension), including the final eleven-method RTX numerical pass and explicit Windows NUMA limitation. The measurements below retain their original earlier scope.
+
 Validated on 2026-09-07, starting from revision `bce2c28021aca717e9950bfcf203f97af819ca85` with the Windows/RTX support changes in the working tree. This records actual local execution; it is not a production qualification or an H100 result.
 
 ## Machine and toolchains

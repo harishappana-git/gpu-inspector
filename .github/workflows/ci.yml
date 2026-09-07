@@ -41,6 +41,17 @@ jobs:
         run: make test-race
       - name: Static analysis
         run: make vet
+      - name: H100 runner syntax and hermetic orchestration
+        if: runner.os == 'Linux'
+        run: |
+          bash -n scripts/build-linux-h100.sh scripts/run-h100.sh scripts/test-h100-runner.sh
+          bash scripts/test-h100-runner.sh
+          bash -n scripts/setup-h100.sh scripts/test-h100-setup.sh scripts/remote-h100-job.sh
+          bash scripts/test-h100-setup.sh
+          bash -n scripts/test-remote-h100-job.sh
+          bash scripts/test-remote-h100-job.sh
+      - name: H100 controller and campaign fixtures (no GPU or SSH)
+        run: python3 -m unittest discover -s scripts -p 'test_h100_*.py' -v
       - name: Build CLI
         run: make build
       - name: CPU known-answer and synthetic-corruption harness
@@ -58,6 +69,7 @@ jobs:
         run: |
           ./bin/gri demo --scenario clean --output ./build/ci-demo-clean
           ./bin/gri verify --report-dir ./build/ci-demo-clean
+          ./bin/gri checklist --report ./build/ci-demo-clean/report.json --json > ./build/ci-checklist.json
           ./bin/gri export --report-dir ./build/ci-demo-clean --output ./build/ci-demo-share
           ./bin/gri verify --report-dir ./build/ci-demo-share
 
@@ -86,6 +98,8 @@ jobs:
         run: go test -race ./...
       - name: Static analysis
         run: go vet ./...
+      - name: H100 controller and campaign fixtures (no GPU or SSH)
+        run: python -m unittest discover -s scripts -p 'test_h100_*.py' -v
       - name: Build native CLI
         run: go build -trimpath -o bin/gri.exe ./cmd/gri
       - name: Configure MSVC CPU harness

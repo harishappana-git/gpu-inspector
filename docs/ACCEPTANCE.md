@@ -2,6 +2,8 @@
 
 This is a procedure for **future authorized qualification**, not a record that it occurred. Follow [Implementation status](IMPLEMENTATION_STATUS.md) and the [worker qualification ledger](../worker/QUALIFICATION.md). The current development version has no qualified worker, healthy pack, production key or real-rental acceptance evidence.
 
+The [H100 single-node setup and remaining checklist](H100_SINGLE_NODE.md) provides `scripts/build-linux-h100.sh`, `scripts/run-h100.sh`, the twelve-method Standard scope, opt-in DCGM and signed advisory inputs. `gri checklist --report DIR/report.json` produces a checklist from verified retained evidence; it does not close the campaign gates described here.
+
 ## 1. Define and retain the exact scope
 
 Use an operator-controlled or explicitly authorized Linux x86-64 H100 PCIe allocation for H100 qualification. Native Windows x64 / RTX 5080 validation can exercise the same implemented workflow first; retain it as a separate hardware/platform campaign. Record the exact full GPU UUID, observed PCI identity, form factor/memory SKU, MIG/virtualization state, visible-device mapping, driver/runtime/cuBLAS/toolkit/compiler versions, host/container limits and method version. Windows runs additionally record WDDM/TCC mode and desktop contention. Keep raw identifiers in private local evidence; share reviewed redacted exports. Do not label RTX, SXM, NVL, a MIG slice or a different driver/method stack as an exact H100 PCIe reference match.

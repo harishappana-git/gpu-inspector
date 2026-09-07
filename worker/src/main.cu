@@ -1,19 +1,32 @@
 #include <cuda_runtime.h>
 #include <cuda_bf16.h>
 #include <cublas_v2.h>
+#include <cublasLt.h>
 #include "json.hpp"
 #include "known_answer.hpp"
 #include "device_support.hpp"
+#include "numa_support.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <fstream>
+#include <cerrno>
+#include <cstdio>
+#ifdef __linux__
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <linux/mempolicy.h>
+#include <sched.h>
+#endif
 
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -75,7 +88,7 @@ Args parse(int argc, char** argv) {
   }
   if (!uuid_valid(args.device)) throw Failure("blocked", "full_physical_gpu_uuid_required");
   if (args.tier != "quick" && args.tier != "standard") throw Failure("blocked", "invalid_tier");
-  const std::set<std::string> methods = {"memory_integrity", "fp32_gemm", "bf16_gemm", "tf32_gemm", "hbm_copy", "h2d", "d2h", "working_set", "dispatch_latency"};
+  const std::set<std::string> methods = {"memory_integrity", "fp32_gemm", "bf16_gemm", "tf32_gemm", "fp8_gemm", "int8_gemm", "hbm_copy", "h2d", "d2h", "working_set", "dispatch_latency", "numa_transfer"};
   if (!methods.count(args.method)) throw Failure("unsupported", "unknown_method");
   if (args.budget_ms < 100 || args.budget_ms > 300000 || args.memory_mib < 1 || args.memory_mib > 8192)
     throw Failure("blocked", "budget_or_memory_cap_out_of_range");
@@ -342,6 +355,8 @@ void gemm(Result& result, std::size_t allowance) {
   }
 }
 
+#include "low_precision.cuh"
+
 void bandwidth(Result& result, std::size_t allowance, std::size_t l2_bytes, int architecture_major) {
   const bool sweep = result.args.method == "working_set";
   std::size_t bytes = allowance / 2;
@@ -428,6 +443,8 @@ void transfer(Result& result, std::size_t allowance) {
   }
 }
 
+#include "numa_transfer.cuh"
+
 void dispatch_latency(Result& result) {
   DeviceBuffer counter(sizeof(uint32_t));
   cuda_check(cudaMemset(counter.data, 0, 4), "dispatch_counter_clear");
@@ -509,9 +526,11 @@ void run(Result& result) {
   result.budget(100);
   if (result.args.method == "memory_integrity") memory_integrity(result, allowance);
   else if (result.args.method == "fp32_gemm" || result.args.method == "bf16_gemm" || result.args.method == "tf32_gemm") gemm(result, allowance);
+  else if (result.args.method == "fp8_gemm" || result.args.method == "int8_gemm") low_precision_gemm(result, allowance);
   else if (result.args.method == "hbm_copy" || result.args.method == "working_set") bandwidth(result, allowance, properties.l2CacheSize > 0 ? std::size_t(properties.l2CacheSize) : 0, properties.major);
   else if (result.args.method == "h2d" || result.args.method == "d2h") transfer(result, allowance);
   else if (result.args.method == "dispatch_latency") dispatch_latency(result);
+  else if (result.args.method == "numa_transfer") numa_transfer(result, allowance);
 }
 }  // namespace
 

@@ -29,6 +29,6 @@ func historyObservations(r hostReader, start time.Time) []model.Observation {
 	}
 	o := hostObs("J04", "history_visibility", f, start)
 	o.Conditions["logs_read"] = false
-	o.Conditions["history_scope"] = "host uptime only; device event-history collector is not implemented"
+	o.Conditions["history_scope"] = "this host adapter reads uptime only; a separate scan-interval journal query does not establish lifetime history or GPU reset epoch"
 	return []model.Observation{o}
 }

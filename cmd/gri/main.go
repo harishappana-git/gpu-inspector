@@ -66,6 +66,12 @@ func run(ctx context.Context, args []string, out, stderr io.Writer) int {
 		err = demoCommand(args[1:], out, stderr)
 	case "catalog":
 		err = catalogCommand(args[1:], out, stderr)
+	case "checklist":
+		err = checklistCommand(args[1:], out, stderr)
+	case "import":
+		err = importCommand(ctx, args[1:], out, stderr)
+	case "worker-validate":
+		err = workerValidateCommand(args[1:], out, stderr)
 	case "explain":
 		err = explainCommand(args[1:], out, stderr)
 	case "ticket":
@@ -116,6 +122,10 @@ func scanCommand(ctx context.Context, args []string, out, stderr io.Writer) int 
 	f.BoolVar(&o.AllowBusy, "allow-busy", false, "explicitly permit overlap with visible GPU activity; performance remains contaminated and uncalibrated")
 	f.StringVar(&o.ReferencePath, "reference", "", "signed qualified reference envelope")
 	f.StringVar(&o.ReferencePublicKey, "reference-public-key", "", "trusted reference Ed25519 PEM public key")
+	f.StringVar(&o.AdvisoryPath, "advisory", "", "Standard only: signed dated vendor/OEM advisory pack")
+	f.StringVar(&o.AdvisoryPublicKey, "advisory-public-key", "", "explicitly trusted advisory Ed25519 PEM public key")
+	f.BoolVar(&o.DCGM, "dcgm", false, "Standard only: opt in to selected-device DCGM level-1 software diagnostics using an existing local hostengine")
+	dcgmBudget := f.Float64("dcgm-budget-seconds", 0, "DCGM sub-budget inside scan budget; default40, range5..60; requires --dcgm")
 	price := f.Float64("price-per-hour", 0, "optional user-declared rental price per hour")
 	currency := f.String("currency", "USD", "three-letter currency for the declared price")
 	f.Float64Var(&o.MaxTemperatureC, "max-temperature-c", 0, "optional user-selected active-test stop ceiling")
@@ -141,6 +151,13 @@ func scanCommand(ctx context.Context, args []string, out, stderr io.Writer) int 
 		return 1
 	}
 	o.Budget = time.Duration(*budget * float64(time.Second))
+	if visited["dcgm-budget-seconds"] {
+		if math.IsNaN(*dcgmBudget) || math.IsInf(*dcgmBudget, 0) || *dcgmBudget < 5 || *dcgmBudget > 60 || !o.DCGM {
+			fmt.Fprintln(stderr, "gri: dcgm-budget-seconds requires --dcgm and a finite value between 5 and 60")
+			return 1
+		}
+		o.DCGMBudget = time.Duration(*dcgmBudget * float64(time.Second))
+	}
 	if !visited["memory-mib"] {
 		o.MemoryMiB = 256
 		if o.Tier == "standard" {
@@ -342,6 +359,7 @@ func signCommand(args []string, out, stderr io.Writer) error {
 	f := flags("sign", stderr)
 	path := f.String("input", "", "manifest/reference payload file")
 	keyPath := f.String("key", "", "private PEM key file (never key material in arguments)")
+	verifyKey := f.String("verify-public-key", "", "optional expected public PEM key; verify key pairing before publishing the envelope")
 	dest := f.String("output", "", "new signed envelope file")
 	if err := parse(f, args); err != nil {
 		return err
@@ -360,6 +378,15 @@ func signCommand(args []string, out, stderr io.Writer) error {
 	signed, err := bundle.Sign(data, key)
 	if err != nil {
 		return err
+	}
+	if *verifyKey != "" {
+		public, e := bundle.LoadPublicKey(*verifyKey)
+		if e != nil {
+			return e
+		}
+		if _, e = bundle.Verify(signed, public); e != nil {
+			return errors.New("signing key does not match the supplied verification public key")
+		}
 	}
 	if err = bundle.WriteNew(*dest, append(signed, '\n'), 0600); err != nil {
 		return err
@@ -501,6 +528,9 @@ const usage = `GPU Rental Inspector (gri) — development implementation
   gri scan --tier standard --budget-seconds 300 --expected-sku h100-pcie-80gb
   gri demo --scenario clean|ecc-error|missing --output DIR
   gri catalog [--json]
+  gri checklist --report DIR/report.json [--json] [--all]
+  gri import --archive CAMPAIGN_ZIP --output NEW_DIR [--json]
+  gri worker-validate --input JSON --device UUID --method METHOD --elapsed-ms N [request flags]
   gri explain FINDING --report DIR/report.json
   gri ticket draft --report DIR/report.json --provider generic [--output FILE]
   gri verify --report-dir DIR
@@ -515,7 +545,7 @@ const usage = `GPU Rental Inspector (gri) — development implementation
 Run a command with --help for its flags. Quick and Standard are local and free.
 No qualified worker or healthy reference ships with this development source.
 Missing dependencies/calibration produce an explicit INCONCLUSIVE report.
-Active workers require Linux x86-64 and a signed, explicitly trusted artifact.
+Active workers require Linux/Windows x86-64 and a signed, explicitly trusted artifact.
 
 Scan exit codes: 0 keep/keep-with-caveats; 1 operational/usage error;
 2 do-not-start; 3 inconclusive; 130 cancellation with partial report.

@@ -48,7 +48,7 @@ if(GRI_BUILD_CUDA)
   endforeach()
   add_executable(gri-cuda-worker src/main.cu)
   target_include_directories(gri-cuda-worker PRIVATE include)
-  target_link_libraries(gri-cuda-worker PRIVATE CUDA::cudart CUDA::cublas)
+  target_link_libraries(gri-cuda-worker PRIVATE CUDA::cudart CUDA::cublas CUDA::cublasLt)
   set_target_properties(gri-cuda-worker PROPERTIES
     CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED YES
     CUDA_RUNTIME_LIBRARY Shared

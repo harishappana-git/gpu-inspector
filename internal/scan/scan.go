@@ -34,6 +34,9 @@ type Options struct {
 	AllowUnqualifiedWorker                                bool
 	AllowBusy                                             bool
 	ReferencePath, ReferencePublicKey                     string
+	AdvisoryPath, AdvisoryPublicKey                       string
+	DCGM                                                  bool
+	DCGMBudget                                            time.Duration
 	Price                                                 *model.Price
 	MaxTemperatureC                                       float64
 	DiskBytes, DownloadBytes                              int64
@@ -120,6 +123,18 @@ func Validate(o Options) error {
 	}
 	if (o.DiskBytes > 0 || o.Endpoint != "") && o.Tier != "standard" {
 		return errors.New("active path tests require the Standard tier")
+	}
+	if (o.AdvisoryPath == "") != (o.AdvisoryPublicKey == "") {
+		return errors.New("advisory and advisory-public-key must be supplied together")
+	}
+	if (o.DCGM || o.AdvisoryPath != "") && o.Tier != "standard" {
+		return errors.New("DCGM and advisory comparisons require the Standard tier")
+	}
+	if o.DCGMBudget != 0 && (o.DCGMBudget < 5*time.Second || o.DCGMBudget > 60*time.Second) {
+		return errors.New("dcgm-budget-seconds must be between 5 and 60")
+	}
+	if o.DCGMBudget != 0 && !o.DCGM {
+		return errors.New("dcgm-budget-seconds requires --dcgm")
 	}
 	if o.DiskBytes > 0 && o.Workspace == "" {
 		return errors.New("disk testing requires an explicit workspace")
@@ -286,7 +301,7 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 			methods = []string{"memory_integrity", "hbm_copy", "bf16_gemm", "fp32_gemm", "h2d", "d2h"}
 		}
 		if o.Tier == "standard" {
-			methods = append(methods, "tf32_gemm", "working_set", "dispatch_latency")
+			methods = append(methods, "tf32_gemm", "working_set", "dispatch_latency", "int8_gemm", "fp8_gemm", "numa_transfer")
 		}
 		for i, method := range methods {
 			if ctx.Err() != nil || j.incomplete() {
@@ -319,6 +334,9 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 				}
 			}
 			remaining := time.Until(start.Add(o.Budget - reserve))
+			if o.DCGM {
+				remaining -= vendorBudget(o)
+			}
 			budget := remaining / time.Duration(len(methods)-i)
 			plugin := cudaPlugin{method: method, binary: binary}
 			if budget > plugin.Estimate(o.Tier) {
@@ -385,6 +403,15 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 			}
 		}
 	}
+	if o.Tier == "standard" {
+		progress("Recording selected-device vendor diagnostic coverage")
+		vendorResult := runDCGM(ctx, o, b, r.Device, pre, j, active && !stopAll && !j.incomplete())
+		j.add(vendorResult)
+		stopVendor, _ := vendorResult.Conditions["stop_active"].(bool)
+		if o.DCGM && (stopVendor || vendorResult.Status == model.Fail || vendorResult.Status == model.Contaminated || vendorResult.Status == model.TimeBudgetExhausted || vendorResult.Status == model.ToolError) {
+			stopAll = true
+		}
+	}
 	if o.DiskBytes > 0 || o.Endpoint != "" {
 		if stopAll || j.incomplete() {
 			j.add(pathFallback(o, model.NotTested, "Optional active path tests skipped after a safety, identity, correctness or evidence-capacity stop.")...)
@@ -410,6 +437,20 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 	j.add(Deltas(before, after)...)
 	j.add(loadSummary(o.Tier, r.Device, j.snapshot())...)
 	j.add(hostSummary(preHost, postHost, j.snapshot())...)
+	if r.Device != nil {
+		if xidContinuity(d, pre, post, j.snapshot()) {
+			j.add(runXid(finalctx, b, d, start, time.Now()))
+		} else {
+			status := model.Contaminated
+			if finalctx.Err() != nil {
+				status = model.TimeBudgetExhausted
+			}
+			j.add(diagnosticGap("B06", "scheduler.xid", &d, status, "Scan-boundary UUID/PCI continuity is incomplete; kernel entries cannot safely be attributed to the originally selected GPU."))
+		}
+	}
+	if o.Tier == "standard" {
+		j.add(runAdvisories(finalctx, o, r.Device, j.snapshot())...)
+	}
 	j.add(clockEvidence(start, time.Now()))
 	r.Cancelled = parent.Err() != nil
 	if ctx.Err() != nil {

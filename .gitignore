@@ -6,3 +6,5 @@
 /reports/
 *.prof
 coverage.out
+/h100-server.json
+__pycache__/

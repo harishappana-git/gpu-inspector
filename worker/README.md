@@ -1,6 +1,6 @@
 # CUDA worker development package
 
-This directory implements the isolated CUDA methods for Phase 1A. The current
+This directory implements the isolated CUDA methods for Phase 1. The current
 version is **0.1.0-dev**, with method version **1.0.0**. The portable methods target
 Linux x86-64 H100 (SM90) and Windows x64 RTX 5080 (SM120). It remains an
 unqualified development build: compilation and local checks do not establish
@@ -58,14 +58,16 @@ dual-architecture CUDA 12.8+ build, set
 `-DGRI_CUDA_ARCHITECTURES="90-real;120-real;120-virtual"`.
 
 The RTX worker uses the GPU's reported memory capacity and L2 size at runtime;
-it does not substitute H100 capacities or baselines. Every existing method is
-available on both architectures, subject to runtime allocation, cuBLAS and
-driver checks. Unsupported operations retain structured unsupported results.
+it does not substitute H100 capacities or baselines. Eleven numerical, memory,
+transfer and dispatch methods target both architectures, subject to runtime
+allocation, cuBLAS and driver checks. The twelfth method, `numa_transfer`, needs
+Linux NUMA APIs and two permitted memory nodes with verified placement; Windows
+returns structured unsupported. Unsupported operations never produce a pass.
 Windows driver model (WDDM/TCC), kernel timeout state, architecture and OS are
 recorded. WDDM desktop scheduling can affect timings. The worker does not change
 Windows TDR settings, power limits, clocks, or driver mode.
 
-The executable links CUDA runtime and cuBLAS. It is not a fully static,
+The executable links CUDA runtime, cuBLAS and cuBLASLt. It is not a fully static,
 driver-independent artifact. Pin the compiler, toolkit, runtime, cuBLAS, glibc,
 and driver versions in the release manifest; review their redistribution terms
 before bundling libraries. Never build on the renter's machine as the default
@@ -163,19 +165,45 @@ counted as a completed pass or full allocation coverage.
 | `fp32_gemm` | Dense column-major cuBLAS GEMM, FP32 operands/output/accumulator, `CUBLAS_COMPUTE_32F_PEDANTIC` and pedantic math; TFLOP/s counts exactly `2MNK`. |
 | `bf16_gemm` | BF16 operands and FP32 output/accumulator; `CUBLAS_COMPUTE_32F`; reduced-precision reduction disallowed. Tensor-core eligibility is distinct from independently proving generated instructions. |
 | `tf32_gemm` | FP32 operands/output, explicit `CUBLAS_COMPUTE_32F_FAST_TF32`, reduced-precision reduction disallowed. Integer known answers do not measure arbitrary-input TF32 accuracy. |
+| `int8_gemm` | Signed INT8 operands, INT32 output/accumulator, `CUBLAS_COMPUTE_32I_PEDANTIC`, unit input scales and zero zero-points; exact host INT64 known-answer checks. `int8_dense_gemm` TOP/s counts `2MNK` integer operations. |
+| `fp8_gemm` | cuBLASLt E4M3 operands, FP32 accumulation/output, explicit FP32 tensor-wide A/B scales of 1, TN physical layout and fast accumulation disabled. `fp8_dense_gemm` TFLOP/s counts `2MNK`; an unavailable algorithm returns unsupported. |
 | `hbm_copy` | Legacy method ID for owned device-memory copy on both architectures; each buffer at least twice reported L2. Effective GB/s counts reads + writes (`2 * bytes`). SM90 retains `hbm_effective_copy_bandwidth`; SM120 reports `device_memory_effective_copy_bandwidth` (RTX 5080 is GDDR7). All returned output words checked. |
 | `working_set` | Cache-scale and above-L2 buffer sizes with strides 1/17; per-window size/stride/value retained. Mixed aggregate is ineligible for HBM reference scoring. |
 | `h2d`, `d2h` | Distinct pinned-host `cudaMemcpyAsync` paths; one-direction payload GB/s. Every transferred word is checked in each measured sample. NUMA binding is uncontrolled and disclosed. |
+| `numa_transfer` | Linux local/remote registered-host H2D comparison with the submitting CPU fixed and every process-owned page's node queried before/after each sample; full returned-content validation. Retains both node medians and their ratio. Windows and unavailable topology/control/query APIs return unsupported. |
 | `dispatch_latency` | 128 separately synchronized one-thread increments; every result checked. Wall microseconds include event/synchronization overhead; event timings retained. |
 
-GEMM uses seeded integers in [-3,3], all exactly representable by FP32, BF16, and
-TF32. Independent host int64 dot products validate 128 output positions per
+GEMM uses seeded integers in [-3,3], all exactly representable by FP32, BF16,
+TF32, INT8 and FP8 E4M3. Independent host int64 dot products validate 128 output positions per
 sample, including first/last positions, and every returned output is checked
 for nonfinite values. Quick starts at M=N=K=2048; Standard at 4096; shape shrinks
 to fit the explicit cap. Two GEMMs warm the library, then 8 or 64 samples each
 time eight identical-input GEMMs. The last output of each batch is checked;
 overwritten intermediate results are not independently validated. This is a
 specified known-answer subset, not a universal floating-point accuracy suite.
+
+FP8 uses the exact E4M3 byte encodings of these small integers, with no adaptive
+quantization or hidden input scaling. Its cuBLASLt algorithm ID, workspace and
+library version are recorded. Workspace is capped at 4 MiB Quick / 32 MiB
+Standard and included in the device allocation cap. INT8 accumulation cannot
+overflow for these input bounds and shapes. Both methods additionally check
+every returned value against the known absolute bound `9*K`. These checks do
+not establish general quantization accuracy or independently prove which GPU
+instructions cuBLAS selected.
+
+The Linux NUMA method obtains the selected GPU's local node from PCI sysfs,
+intersects its CPU list with the process's permitted affinity, and requires a
+second node from the kernel's allowed memory set. It binds only the submitting
+thread and fresh private anonymous mappings, using `mbind(MPOL_BIND)` before
+touching pages. Query-only `move_pages` checks all page locations before/after
+pinning and every measured sample. It does not migrate other processes' pages
+or alter machine policy. The thread affinity is restored and each registered
+mapping is released on exit. Placement failures cannot yield a completed
+comparison. Local is measured before remote, which is disclosed because time
+variation can affect the ratio. Quick collects five samples per node; Standard
+collects ten, with four H2D transfers per sample and full output verification.
+The pooled bandwidth is descriptive, without a calibrated NUMA penalty claim.
+This Linux path still needs a real Linux build and multi-node runtime acceptance.
 
 The input generator, seeds, and canonical logical-input FNV-1a checksum are
 recorded. Memory/transfer checks retain checksums of verified readbacks or
@@ -216,3 +244,5 @@ worker or establish a healthy H100 or RTX 5080 performance envelope.
 - NVIDIA [CUDA 12.8 release notes](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-toolkit-release-notes/index.html): Blackwell compiler/library support.
 - NVIDIA [Windows installation guide](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-installation-guide-microsoft-windows/index.html): supported Windows/compiler toolchains.
 - NVIDIA [CUDA GPU capabilities](https://developer.nvidia.com/cuda/gpus): RTX 5080 compute capability 12.0.
+- NVIDIA [CUDA 12.8 cuBLAS documentation](https://docs.nvidia.com/cuda/archive/12.8.0/cublas/index.html): E4M3 formats, tensor-wide scales, TN layout, INT8 compute modes and cuBLASLt algorithm eligibility.
+- Linux [mbind](https://man7.org/linux/man-pages/man2/mbind.2.html) and [move_pages](https://man7.org/linux/man-pages/man2/move_pages.2.html): owned mapping policy and query-only page placement checks.

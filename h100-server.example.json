@@ -1,0 +1,17 @@
+{
+  "host": "YOUR_H100_HOST_OR_SSH_ALIAS",
+  "user": "ubuntu",
+  "port": 22,
+  "identity_file": "",
+  "known_hosts_file": "",
+  "host_key_sha256": "",
+  "device": "",
+  "expected_sku": "",
+  "install_system_deps": true,
+  "sanitizer": true,
+  "dcgm": true,
+  "setup_budget_seconds": 1800,
+  "campaign_budget_seconds": 3600,
+  "cuda_root": "",
+  "open_report": true
+}

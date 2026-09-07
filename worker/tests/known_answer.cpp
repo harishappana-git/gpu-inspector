@@ -1,6 +1,7 @@
 #include "known_answer.hpp"
 #include "json.hpp"
 #include "device_support.hpp"
+#include "numa_support.hpp"
 #include <iostream>
 #include <limits>
 #include <cstring>
@@ -20,6 +21,15 @@ int main() {
     require(gri::memory_technology("NVIDIA H100 PCIe") == "HBM", "H100 memory label regressed");
     require(gri::memory_technology("different SM120 product") == "unknown", "memory technology invented");
     require(std::string(gri::memory_bandwidth_metric(12)) == "device_memory_effective_copy_bandwidth", "RTX bandwidth mislabeled HBM");
+    const uint8_t e4m3_golden[] = {0xc4, 0xc0, 0xb8, 0x00, 0x38, 0x40, 0x44};
+    for (int value = -3; value <= 3; ++value)
+      require(gri::fp8_e4m3_small_integer(value) == e4m3_golden[value+3], "FP8 exact integer encoding regression");
+    require(9 * 4096 < std::numeric_limits<int32_t>::max(), "INT8 known-answer accumulator overflow");
+    require(gri::parse_cpu_list("0-2,7,9-10\n") == std::vector<int>({0,1,2,7,9,10}), "NUMA cpulist parser regression");
+    for (const auto* invalid : {"", "2-1", "1,", "-1", "1024", "1;2", "0-99999999"}) {
+      bool rejected=false;try{gri::parse_cpu_list(invalid);}catch(const std::invalid_argument&){rejected=true;}
+      require(rejected,"malformed or unbounded NUMA CPU list accepted");
+    }
     constexpr std::size_t count = 4099;
     std::vector<uint32_t> buffer(count);
     for (auto seed : {0U, 1U, 0xffffffffU}) {

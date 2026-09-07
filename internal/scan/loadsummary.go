@@ -193,7 +193,7 @@ type loadRun struct {
 
 func loadMethod(method string) bool {
 	switch method {
-	case "memory_integrity", "fp32_gemm", "bf16_gemm", "tf32_gemm", "hbm_copy", "h2d", "d2h", "working_set", "dispatch_latency":
+	case "memory_integrity", "fp32_gemm", "bf16_gemm", "tf32_gemm", "fp8_gemm", "int8_gemm", "hbm_copy", "h2d", "d2h", "working_set", "dispatch_latency":
 		return true
 	}
 	return false
