@@ -1,0 +1,1031 @@
+[
+  {
+    "id": "A01",
+    "stage": "Q",
+    "name": "Claimed vs visible SKU",
+    "method": "Compare user expectation with NVML, CUDA and available PCI attributes.",
+    "boundary": "Match, mismatch or unresolved expectation."
+  },
+  {
+    "id": "A02",
+    "stage": "Q",
+    "name": "Exact variant",
+    "method": "Form factor, memory size, part/subsystem identifiers where exposed.",
+    "boundary": "Do not apply PCIe expectations to SXM/NVL."
+  },
+  {
+    "id": "A03",
+    "stage": "Q",
+    "name": "CUDA capability",
+    "method": "Architecture, multiprocessor count, cache and supported attributes.",
+    "boundary": "Attribute consistency, not a die-authenticity certificate."
+  },
+  {
+    "id": "A04",
+    "stage": "Q",
+    "name": "Usable device",
+    "method": "Initialize chosen device and execute checked work.",
+    "boundary": "Management visibility differs from application access."
+  },
+  {
+    "id": "A05",
+    "stage": "Q",
+    "name": "Memory allocation shape",
+    "method": "Reported capacity, free bytes and successful bounded allocation.",
+    "boundary": "Accessible capacity mismatch; physical type not proven."
+  },
+  {
+    "id": "A06",
+    "stage": "Q",
+    "name": "MIG / vGPU mode",
+    "method": "Supported partition queries and runtime-visible resource shape.",
+    "boundary": "Slice or full-device expectation; unknown remains unknown."
+  },
+  {
+    "id": "A07",
+    "stage": "Q",
+    "name": "Stable target mapping",
+    "method": "Map UUID/PCI/runtime handle; recheck before each worker.",
+    "boundary": "Stop if the selected resource changes or is ambiguous."
+  },
+  {
+    "id": "A08",
+    "stage": "Q",
+    "name": "Visible count / uniqueness",
+    "method": "Enumerate permitted devices without stressing peers.",
+    "boundary": "Expected visibility mismatch; no hidden-host inventory claim."
+  },
+  {
+    "id": "A09",
+    "stage": "S",
+    "name": "Performance signature",
+    "method": "Compute/memory/transfer pattern against same-method references.",
+    "boundary": "Identity inconsistency hypothesis, not specific counterfeit ID."
+  },
+  {
+    "id": "A10",
+    "stage": "S",
+    "name": "VBIOS / OEM consistency",
+    "method": "Exposed version against signed vendor/OEM references when available.",
+    "boundary": "Unrecognized version is unknown, not automatically modified."
+  },
+  {
+    "id": "A11",
+    "stage": "Q",
+    "name": "Virtualization context",
+    "method": "Allowlisted cgroup, namespace, DMI/CPU signals where available.",
+    "boundary": "Observed execution context; not isolation proof."
+  },
+  {
+    "id": "A12",
+    "stage": "F",
+    "name": "Hardware-rooted attestation",
+    "method": "Supported device and CPU-TEE evidence with independent verifier.",
+    "boundary": "Precisely scoped verified claims, not a health/performance pass."
+  },
+  {
+    "id": "B01",
+    "stage": "Q",
+    "name": "ECC availability/state",
+    "method": "Capability-aware ECC queries and error status.",
+    "boundary": "Enabled, disabled, unsupported or blocked; never \u201czero\u201d for N/A."
+  },
+  {
+    "id": "B02",
+    "stage": "Q",
+    "name": "Corrected-error delta",
+    "method": "Pre/post counters with reset/epoch detection.",
+    "boundary": "New events during the scan; historical total kept separately."
+  },
+  {
+    "id": "B03",
+    "stage": "Q",
+    "name": "Uncorrectable-error delta",
+    "method": "Device-scoped events, counter deltas and recovery state.",
+    "boundary": "Stop active testing when a current critical condition is detected."
+  },
+  {
+    "id": "B04",
+    "stage": "Q",
+    "name": "Row-remap state",
+    "method": "Pending, failure, available reserve and supported remap fields.",
+    "boundary": "Maintenance required versus historical repaired condition."
+  },
+  {
+    "id": "B05",
+    "stage": "Q",
+    "name": "Retired memory pages",
+    "method": "Supported page-retirement state and pending action.",
+    "boundary": "Contextual health signal; no universal lifetime threshold."
+  },
+  {
+    "id": "B06",
+    "stage": "Q",
+    "name": "Xid evidence",
+    "method": "NVML events and readable kernel logs, mapped to GPU/time.",
+    "boundary": "Hardware/software/application possibilities remain distinct."
+  },
+  {
+    "id": "B07",
+    "stage": "Q",
+    "name": "Sampled memory patterns",
+    "method": "Known patterns in test-owned allocations; verified readback.",
+    "boundary": "Exact bytes/patterns/passes tested and mismatch count."
+  },
+  {
+    "id": "B08",
+    "stage": "S",
+    "name": "Broader accessible-memory sweep",
+    "method": "Bounded chunks, varied patterns and headroom protection.",
+    "boundary": "Larger logical coverage; never all physical VRAM claimed."
+  },
+  {
+    "id": "B09",
+    "stage": "Q",
+    "name": "Compute correctness",
+    "method": "Known-answer operations; independent host checks where practical.",
+    "boundary": "Reproducible wrong output is a blocker; investigate cause."
+  },
+  {
+    "id": "B10",
+    "stage": "S",
+    "name": "Errors across repeated load",
+    "method": "Compare early/late error deltas and successful operations.",
+    "boundary": "Observed stability interval, not multi-day survival probability."
+  },
+  {
+    "id": "B11",
+    "stage": "S",
+    "name": "Vendor diagnostics",
+    "method": "Selected target-restricted DCGM tests within approved budget.",
+    "boundary": "Retain individual pass/fail/skip results and plugin versions."
+  },
+  {
+    "id": "B12",
+    "stage": "Q",
+    "name": "Context/device loss",
+    "method": "Worker status, timeout, CUDA errors and device reappearance.",
+    "boundary": "Distinguish test failure, software failure and device loss."
+  },
+  {
+    "id": "C01",
+    "stage": "Q",
+    "name": "FP32 compute",
+    "method": "Qualified GEMM shapes, timings and checked results.",
+    "boundary": "Measured dense throughput vs eligible same-method reference."
+  },
+  {
+    "id": "C02",
+    "stage": "Q",
+    "name": "BF16/FP16 tensor compute",
+    "method": "Explicit operand/accumulator type and supported library path.",
+    "boundary": "Relevant accelerator path, no sparse/dense confusion."
+  },
+  {
+    "id": "C03",
+    "stage": "S",
+    "name": "TF32 precision behavior",
+    "method": "Explicit math mode and verification tolerance.",
+    "boundary": "Avoid comparing TF32 and full-FP32 results as equivalent."
+  },
+  {
+    "id": "C04",
+    "stage": "S",
+    "name": "FP8/INT8 capability",
+    "method": "Only qualified supported kernels and scale conventions.",
+    "boundary": "Not tested rather than failed when the test path is absent."
+  },
+  {
+    "id": "C05",
+    "stage": "Q",
+    "name": "HBM bandwidth",
+    "method": "Large-buffer streaming or qualified copy test exceeding cache scale.",
+    "boundary": "Effective bandwidth with exact read/write byte definition."
+  },
+  {
+    "id": "C06",
+    "stage": "S",
+    "name": "Cache / working-set sweep",
+    "method": "Vary working set and strides within owned memory.",
+    "boundary": "Separate cache effects from sustained device-memory behavior."
+  },
+  {
+    "id": "C07",
+    "stage": "Q",
+    "name": "Pinned H2D / D2H",
+    "method": "Separate transfer directions with checksum and host placement.",
+    "boundary": "Transfer result, host-memory context and tested size."
+  },
+  {
+    "id": "C08",
+    "stage": "S",
+    "name": "Launch/dispatch latency",
+    "method": "Repeated small operations with warm-up and explicit synchronization.",
+    "boundary": "Jitter symptom; not proof of time-sharing."
+  },
+  {
+    "id": "C09",
+    "stage": "S",
+    "name": "Sustained compute curve",
+    "method": "Non-overlapping early/late windows, clocks and event timeline.",
+    "boundary": "Measured degradation over this interval only."
+  },
+  {
+    "id": "C10",
+    "stage": "S",
+    "name": "Repeatability",
+    "method": "Robust spread, outliers and sample count across windows.",
+    "boundary": "Unstable measurement or allocation; cause may be unresolved."
+  },
+  {
+    "id": "C11",
+    "stage": "F",
+    "name": "Real application proxy",
+    "method": "Pinned inference/training/rendering test with representative inputs.",
+    "boundary": "Proxy result explicitly separated from the user\u2019s real job."
+  },
+  {
+    "id": "C12",
+    "stage": "S",
+    "name": "Timing/data validity",
+    "method": "CUDA errors, returned result checks, wall/event time consistency.",
+    "boundary": "Invalidate implausible or incomplete measurements."
+  },
+  {
+    "id": "D01",
+    "stage": "Q",
+    "name": "Power configuration",
+    "method": "Supported configured/default/allowed limits and declared profile.",
+    "boundary": "Disclosed setting versus possible allocation mismatch."
+  },
+  {
+    "id": "D02",
+    "stage": "S",
+    "name": "Power/performance relationship",
+    "method": "Align telemetry with measured work windows.",
+    "boundary": "Quantify observed performance gap, not a universal cap penalty."
+  },
+  {
+    "id": "D03",
+    "stage": "Q",
+    "name": "Clock-event reasons",
+    "method": "Supported reason masks/counters and sampling intervals.",
+    "boundary": "Power limiting, thermal slowing and idle are distinguished."
+  },
+  {
+    "id": "D04",
+    "stage": "Q",
+    "name": "Core temperature",
+    "method": "Available sensor and device-specific thresholds.",
+    "boundary": "Operating observation; no generic one-temperature verdict."
+  },
+  {
+    "id": "D05",
+    "stage": "S",
+    "name": "Memory temperature",
+    "method": "Read only if exposed; otherwise record missing.",
+    "boundary": "Do not infer junction temperature from core temperature."
+  },
+  {
+    "id": "D06",
+    "stage": "S",
+    "name": "Cooling stability",
+    "method": "Temperature/performance trend under bounded load.",
+    "boundary": "Short-duration correlation, not thermal-paste or mining history."
+  },
+  {
+    "id": "D07",
+    "stage": "S",
+    "name": "Fan/chassis signals",
+    "method": "Supported fan data; server cooling only with host access.",
+    "boundary": "Passive GPU without fan metric is not a failed fan."
+  },
+  {
+    "id": "D08",
+    "stage": "Q",
+    "name": "PCIe negotiated link",
+    "method": "Width/generation at idle and during transfer; endpoint capabilities.",
+    "boundary": "Persistent narrow/slow path versus idle power management."
+  },
+  {
+    "id": "D09",
+    "stage": "S",
+    "name": "PCIe error deltas",
+    "method": "Supported replay counters and available AER evidence.",
+    "boundary": "Rate/context of errors; no hardware cause from total alone."
+  },
+  {
+    "id": "D10",
+    "stage": "S",
+    "name": "NUMA-sensitive transfer",
+    "method": "Repeat on permitted host placement when safe and meaningful.",
+    "boundary": "Placement-sensitive bottleneck and verified retest direction."
+  },
+  {
+    "id": "D11",
+    "stage": "F",
+    "name": "GPU energy per work",
+    "method": "Supported energy or integrated telemetry with scope labels.",
+    "boundary": "GPU-only estimate, not whole-node electricity or billed spend."
+  },
+  {
+    "id": "D12",
+    "stage": "F",
+    "name": "Power/cooling root cause",
+    "method": "Correlate BMC/PSU/inlet telemetry with GPU behavior.",
+    "boundary": "Provider-side investigation, not guest-side PSU diagnosis."
+  },
+  {
+    "id": "E01",
+    "stage": "Q",
+    "name": "Effective CPU allocation",
+    "method": "Allowed CPUs, affinity, quota and cgroup hierarchy visibility.",
+    "boundary": "Visible CPUs are not necessarily usable CPU entitlement."
+  },
+  {
+    "id": "E02",
+    "stage": "Q",
+    "name": "CPU quota throttling",
+    "method": "cpu.stat deltas where exposed.",
+    "boundary": "Time lost to quota enforcement, not proof of host overselling."
+  },
+  {
+    "id": "E03",
+    "stage": "S",
+    "name": "Reported steal time",
+    "method": "/proc/stat interval with virtualization context.",
+    "boundary": "Hypervisor-reported unavailable CPU time; cause unproven."
+  },
+  {
+    "id": "E04",
+    "stage": "O",
+    "name": "CPU throughput",
+    "method": "Short bounded sysbench/stress-ng or own test, run separately.",
+    "boundary": "Only compare equivalent effective host allocations."
+  },
+  {
+    "id": "E05",
+    "stage": "Q",
+    "name": "RAM limit/headroom",
+    "method": "Process/cgroup limits, current usage and available host context.",
+    "boundary": "Job-visible memory ceiling and current headroom."
+  },
+  {
+    "id": "E06",
+    "stage": "Q",
+    "name": "OOM/reclaim events",
+    "method": "cgroup memory.events and readable relevant logs.",
+    "boundary": "Observed resource event; historical scope disclosed."
+  },
+  {
+    "id": "E07",
+    "stage": "Q",
+    "name": "Swap and pressure",
+    "method": "Available swap activity and PSI windows.",
+    "boundary": "Resource-waiting symptoms affecting the job."
+  },
+  {
+    "id": "E08",
+    "stage": "Q",
+    "name": "Shared-memory capacity",
+    "method": "/dev/shm capacity/use and intended runtime needs.",
+    "boundary": "Small capacity is a caveat, not guaranteed DataLoader failure."
+  },
+  {
+    "id": "E09",
+    "stage": "Q",
+    "name": "Pinned-memory/process limits",
+    "method": "Relevant ulimits, pids and resource restrictions.",
+    "boundary": "Explain the specific operation a limit may block."
+  },
+  {
+    "id": "E10",
+    "stage": "Q",
+    "name": "NUMA / affinity map",
+    "method": "Available CPU/memory locality relative to selected GPU.",
+    "boundary": "Placement context; do not assume cross-NUMA is always fatal."
+  },
+  {
+    "id": "E11",
+    "stage": "F",
+    "name": "Host-RAM health/performance",
+    "method": "Owned-buffer tests; EDAC/RAS evidence only with authorization.",
+    "boundary": "No guest test certifies all installed physical RAM."
+  },
+  {
+    "id": "E12",
+    "stage": "F",
+    "name": "Input-pipeline waiting",
+    "method": "Profile data loading, CPU preparation and transfer under real job.",
+    "boundary": "GPU waiting on host, with measured critical-path effect."
+  },
+  {
+    "id": "F01",
+    "stage": "Q",
+    "name": "Free space and quota",
+    "method": "Selected workspace filesystem, writable access and visible limits.",
+    "boundary": "Capacity available to this job, not entire-host disk size."
+  },
+  {
+    "id": "F02",
+    "stage": "Q",
+    "name": "Mount/persistence context",
+    "method": "Exposed filesystem/mount data plus provider/user declaration.",
+    "boundary": "Measured access separated from declared persistence."
+  },
+  {
+    "id": "F03",
+    "stage": "O",
+    "name": "Sequential read/write",
+    "method": "Bounded fio scratch-file workload with cache method stated.",
+    "boundary": "Measured path throughput, not NVMe/SATA hardware identity."
+  },
+  {
+    "id": "F04",
+    "stage": "F",
+    "name": "Random/small-file access",
+    "method": "Representative I/O size, depth and file distribution.",
+    "boundary": "Whether this dataset layout is a limiting factor."
+  },
+  {
+    "id": "F05",
+    "stage": "O",
+    "name": "Slow I/O operations",
+    "method": "Latency distribution with enough samples and test conditions.",
+    "boundary": "Tail measurements without overclaiming from tiny samples."
+  },
+  {
+    "id": "F06",
+    "stage": "O",
+    "name": "Cache and burst effects",
+    "method": "Record warm/cold method, file size and sustained window.",
+    "boundary": "Cached burst is not advertised as device steady-state speed."
+  },
+  {
+    "id": "F07",
+    "stage": "O",
+    "name": "Test-file integrity",
+    "method": "Known test content and readback/checksum verification.",
+    "boundary": "Only test-owned data verified; failure needs corroboration."
+  },
+  {
+    "id": "F08",
+    "stage": "F",
+    "name": "Checkpoint save/load",
+    "method": "Application-defined save, read and resume validation.",
+    "boundary": "Recovery actually works within the tested contract."
+  },
+  {
+    "id": "F09",
+    "stage": "F",
+    "name": "Checkpoint cost",
+    "method": "Measured save/pause/upload time and retained capacity.",
+    "boundary": "Progress-protection trade-off for the user\u2019s job."
+  },
+  {
+    "id": "F10",
+    "stage": "F",
+    "name": "Storage health telemetry",
+    "method": "smartctl/nvme-cli/BMC only with authorized host access.",
+    "boundary": "Device-scoped wear/error signals; guest visibility may be absent."
+  },
+  {
+    "id": "G01",
+    "stage": "Q",
+    "name": "Visible route/interface context",
+    "method": "Read-only selected route/interface information.",
+    "boundary": "Connectivity context without scanning neighbors."
+  },
+  {
+    "id": "G02",
+    "stage": "O",
+    "name": "Required endpoint reachability",
+    "method": "User-authorized DNS/TLS/HTTP request with deadline.",
+    "boundary": "This endpoint is reachable or failed for a named reason."
+  },
+  {
+    "id": "G03",
+    "stage": "O",
+    "name": "Real artifact pull",
+    "method": "Fixed-revision, licensed public object or user-selected object; bounded bytes.",
+    "boundary": "Measured endpoint transfer, including authentication/cache context."
+  },
+  {
+    "id": "G04",
+    "stage": "O",
+    "name": "Download duration estimate",
+    "method": "Known object byte size divided by representative measured rate.",
+    "boundary": "Assumption-labeled range; parameter count alone is insufficient."
+  },
+  {
+    "id": "G05",
+    "stage": "F",
+    "name": "Upload/checkpoint path",
+    "method": "Authorized write to a designated test object and cleanup.",
+    "boundary": "Actual destination throughput, not generic upload speed."
+  },
+  {
+    "id": "G06",
+    "stage": "F",
+    "name": "TCP throughput/latency",
+    "method": "Controlled iperf3 peer, direction, streams and settings.",
+    "boundary": "Peer- and path-specific result with repeatability."
+  },
+  {
+    "id": "G07",
+    "stage": "F",
+    "name": "Loss/retransmit evidence",
+    "method": "Available transport counters; bounded UDP only with permission.",
+    "boundary": "Transport symptom, not an automatic provider fault."
+  },
+  {
+    "id": "G08",
+    "stage": "F",
+    "name": "Serving reachability",
+    "method": "Controlled client connecting to the user\u2019s explicit test endpoint.",
+    "boundary": "No arbitrary port scanning or assertion of universal reachability."
+  },
+  {
+    "id": "G09",
+    "stage": "F",
+    "name": "Location/IP context",
+    "method": "Optional provider declaration and consensual external lookup.",
+    "boundary": "Approximate network context; no physical-location or trust proof."
+  },
+  {
+    "id": "G10",
+    "stage": "F",
+    "name": "Network costs/limits",
+    "method": "Declared tariffs, transferred bytes and explicit provider data.",
+    "boundary": "Egress/transfer costs and potential limit context."
+  },
+  {
+    "id": "G11",
+    "stage": "F",
+    "name": "Inter-node fabric",
+    "method": "Authorized RDMA/NCCL measurements between selected allocations.",
+    "boundary": "No single-GPU test can establish cluster-fabric quality."
+  },
+  {
+    "id": "H01",
+    "stage": "Q",
+    "name": "Driver/runtime versions",
+    "method": "Loaded driver/runtime/library versions, not only smi heading.",
+    "boundary": "Actual compatibility context; CUDA driver support differs from installed toolkit."
+  },
+  {
+    "id": "H02",
+    "stage": "Q",
+    "name": "Library usability",
+    "method": "Load required libraries; execute bounded initialization/smoke operation.",
+    "boundary": "Missing dependency vs incompatible runtime vs GPU failure."
+  },
+  {
+    "id": "H03",
+    "stage": "Q",
+    "name": "Probe compatibility",
+    "method": "Worker architecture and pinned library/runtime requirements.",
+    "boundary": "Unsupported worker is a test limitation, not a bad card."
+  },
+  {
+    "id": "H04",
+    "stage": "S",
+    "name": "Documented driver issue",
+    "method": "Curated vendor advisory with exact range, SKU, symptom and date.",
+    "boundary": "Applicable known issue; no broad \u201cold driver = broken\u201d rule."
+  },
+  {
+    "id": "H05",
+    "stage": "F",
+    "name": "Framework import/operation",
+    "method": "Explicit PyTorch/other stack smoke test in selected environment.",
+    "boundary": "One real supported operation, not an import-only pass."
+  },
+  {
+    "id": "H06",
+    "stage": "F",
+    "name": "Required extension",
+    "method": "User-selected attention/render/quantization extension and test.",
+    "boundary": "Feature works in the requested stack or remains unverified."
+  },
+  {
+    "id": "H07",
+    "stage": "Q",
+    "name": "Container resource setup",
+    "method": "Relevant shm, memlock, pids and device accessibility.",
+    "boundary": "Specific configuration caveat without changing security controls."
+  },
+  {
+    "id": "H08",
+    "stage": "F",
+    "name": "Application numerical checks",
+    "method": "Customer validation contract plus appropriate precision tolerances.",
+    "boundary": "Outputs meet tested criteria; not a model-quality certificate."
+  },
+  {
+    "id": "H09",
+    "stage": "F",
+    "name": "Application sanitizer run",
+    "method": "Optional Compute Sanitizer outside timed performance path.",
+    "boundary": "Diagnose program errors, not certify physical VRAM."
+  },
+  {
+    "id": "H10",
+    "stage": "S",
+    "name": "Reproducible environment",
+    "method": "Build IDs, test-pack digest and relevant image/library identifiers.",
+    "boundary": "Result can be reproduced or its limitations are visible."
+  },
+  {
+    "id": "H11",
+    "stage": "F",
+    "name": "Time-to-useful-result",
+    "method": "Installer/startup/model-load/first-success phases separately timed.",
+    "boundary": "Instance-start timing requires trustworthy start-time evidence."
+  },
+  {
+    "id": "H12",
+    "stage": "F",
+    "name": "Dataset/license readiness",
+    "method": "Verify requested model/data availability and user-authorized access.",
+    "boundary": "No automatic gated-model pull or execution of untrusted model code."
+  },
+  {
+    "id": "I01",
+    "stage": "Q",
+    "name": "Idle GPU consumption",
+    "method": "Supported utilization/memory/process evidence in visible scope.",
+    "boundary": "Unexplained consumption; reserve driver/framework memory considered."
+  },
+  {
+    "id": "I02",
+    "stage": "O",
+    "name": "Visible competing processes",
+    "method": "Minimal process metadata for permitted scope; optional known indicators.",
+    "boundary": "A process name is not proof of a miner or malware."
+  },
+  {
+    "id": "I03",
+    "stage": "Q",
+    "name": "Dangerous container exposure",
+    "method": "Observe capabilities, privileged indicators and mounted control sockets.",
+    "boundary": "Report exposure and least-privilege advice; never exploit it."
+  },
+  {
+    "id": "I04",
+    "stage": "O",
+    "name": "Tool integrity signals",
+    "method": "Verify our artifacts; compare system packages to authentic references if available.",
+    "boundary": "Modified or unverified tool, not proof the entire host is clean."
+  },
+  {
+    "id": "I05",
+    "stage": "O",
+    "name": "Loader/tampering indicators",
+    "method": "Relevant allowlisted loader settings; do not collect full environment.",
+    "boundary": "Potential influence on the test; legitimate instrumentation may explain it."
+  },
+  {
+    "id": "I06",
+    "stage": "F",
+    "name": "Unexpected connections",
+    "method": "Optional metadata-only snapshot within authorized process scope.",
+    "boundary": "Investigate unexplained egress; no payload capture by default."
+  },
+  {
+    "id": "I07",
+    "stage": "F",
+    "name": "Prior-tenant residue",
+    "method": "Explicit workspace-only metadata check with user permission.",
+    "boundary": "Potential provisioning hygiene issue; do not open others\u2019 files."
+  },
+  {
+    "id": "I08",
+    "stage": "F",
+    "name": "SSH key continuity",
+    "method": "Controller-held known-host record and independent confirmation.",
+    "boundary": "Changed key needs verification; rebuilds may legitimately change keys."
+  },
+  {
+    "id": "I09",
+    "stage": "Q",
+    "name": "Data-exposure guidance",
+    "method": "Observed isolation and attestation status plus trust assumptions.",
+    "boundary": "No datacenter/community label is a security certification."
+  },
+  {
+    "id": "I10",
+    "stage": "F",
+    "name": "External attestation verification",
+    "method": "Fresh challenge, issuer/signature/revocation checks and CPU/GPU scope.",
+    "boundary": "Attested properties only; report verification gaps separately."
+  },
+  {
+    "id": "J01",
+    "stage": "S",
+    "name": "Observed stability interval",
+    "method": "Successful checked operations, errors and elapsed time.",
+    "boundary": "No failure observed for the actual tested duration."
+  },
+  {
+    "id": "J02",
+    "stage": "S",
+    "name": "Transient slow windows",
+    "method": "Repeated same-method windows with robust spread.",
+    "boundary": "Measured variability, not \u201cconfirmed noisy neighbor.\u201d"
+  },
+  {
+    "id": "J03",
+    "stage": "S",
+    "name": "Warm-up vs deterioration",
+    "method": "Timeline separating initialization, settling and later changes.",
+    "boundary": "Do not extrapolate heat-soak failure from a short temperature slope."
+  },
+  {
+    "id": "J04",
+    "stage": "Q",
+    "name": "History visibility",
+    "method": "Uptime/reset epoch and oldest accessible event timestamp.",
+    "boundary": "Host uptime is not the rental\u2019s reliability history."
+  },
+  {
+    "id": "J05",
+    "stage": "Q",
+    "name": "Clock sanity",
+    "method": "Wall/monotonic consistency; exposed synchronization status.",
+    "boundary": "Correlation uncertainty; no intrusive time reconfiguration."
+  },
+  {
+    "id": "J06",
+    "stage": "F",
+    "name": "Interruption model",
+    "method": "User/provider-declared spot or interruptible contract.",
+    "boundary": "Operational preparedness, not a predicted eviction time."
+  },
+  {
+    "id": "J07",
+    "stage": "F",
+    "name": "Host/allocation history",
+    "method": "Consent-based controller-linked observations with identity uncertainty.",
+    "boundary": "History of this identifiable allocation, not guaranteed permanent machine ID."
+  },
+  {
+    "id": "J08",
+    "stage": "F",
+    "name": "Guardian drift",
+    "method": "Low-overhead passive monitoring; approved idle-time active retests.",
+    "boundary": "Observed new event or change relative to the accepted baseline."
+  },
+  {
+    "id": "J09",
+    "stage": "F",
+    "name": "Failure-risk model",
+    "method": "Labeled longitudinal outcomes, censoring, calibration and false-alarm evaluation.",
+    "boundary": "No probability or checkpoint countdown until validated."
+  },
+  {
+    "id": "J10",
+    "stage": "F",
+    "name": "Checkpoint advice",
+    "method": "User recovery-point goal plus measured checkpoint cost; explicit assumptions.",
+    "boundary": "Protect progress without inventing a failure hazard."
+  },
+  {
+    "id": "K01",
+    "stage": "F",
+    "name": "Reproducible workload contract",
+    "method": "Model/revision, precision, batch, shapes, concurrency and software digest.",
+    "boundary": "Exactly what the assessment covers."
+  },
+  {
+    "id": "K02",
+    "stage": "F",
+    "name": "Inference behavior",
+    "method": "Cold load, warm prefill/decode and latency/throughput with cache controls.",
+    "boundary": "Useful output rate under the stated latency requirement."
+  },
+  {
+    "id": "K03",
+    "stage": "F",
+    "name": "Fine-tuning/training step",
+    "method": "Representative forward/backward/optimizer work and token count.",
+    "boundary": "Step speed and memory peak for this exact configuration."
+  },
+  {
+    "id": "K04",
+    "stage": "F",
+    "name": "Image generation",
+    "method": "Fixed model, resolution, scheduler/steps and execution settings.",
+    "boundary": "Images per time for tested settings; not quality ranking."
+  },
+  {
+    "id": "K05",
+    "stage": "F",
+    "name": "Rendering",
+    "method": "Fixed scene/renderer/backend and correctness contract.",
+    "boundary": "Rendering fit without assuming a data-center GPU supports every graphics feature."
+  },
+  {
+    "id": "K06",
+    "stage": "F",
+    "name": "Operating-range sweep",
+    "method": "Bounded batches/context/concurrency and successful result checks.",
+    "boundary": "Tested safe range; outside it remains unverified."
+  },
+  {
+    "id": "K07",
+    "stage": "F",
+    "name": "Critical-path profile",
+    "method": "Compute, data-loader, transfer, storage and communication timelines.",
+    "boundary": "The part actually delaying completed useful work."
+  },
+  {
+    "id": "K08",
+    "stage": "F",
+    "name": "Within-node imbalance",
+    "method": "Compare same-stage devices/ranks with equal work and topology context.",
+    "boundary": "Potential limiting device/path; unequal work is a confounder."
+  },
+  {
+    "id": "K09",
+    "stage": "F",
+    "name": "Cross-node stragglers",
+    "method": "Rank-aware synchronized traces and comparable per-rank work.",
+    "boundary": "Victim waiting at a collective is not automatically the cause."
+  },
+  {
+    "id": "K10",
+    "stage": "F",
+    "name": "Retry/resume rehearsal",
+    "method": "Known failure boundary in an authorized test job and application resume.",
+    "boundary": "Recovery behavior is measured, not inferred from a saved file."
+  },
+  {
+    "id": "K11",
+    "stage": "F",
+    "name": "Projection validity",
+    "method": "Only interpolate calibrated tested configurations; show uncertainty.",
+    "boundary": "No 13B/70B throughput estimate from generic GEMM alone."
+  },
+  {
+    "id": "L01",
+    "stage": "F",
+    "name": "Resource graph",
+    "method": "Cluster/node/device/partition/NIC/storage-path relationships.",
+    "boundary": "Scope of every observation remains explicit."
+  },
+  {
+    "id": "L02",
+    "stage": "F",
+    "name": "GPU pair paths",
+    "method": "P2P access, measured bandwidth/latency and errors.",
+    "boundary": "One weak pair distinguished from the node average."
+  },
+  {
+    "id": "L03",
+    "stage": "F",
+    "name": "NVLink/NVSwitch",
+    "method": "Supported link/fabric state, counters and real transfers.",
+    "boundary": "Exposed topology plus measured behavior."
+  },
+  {
+    "id": "L04",
+    "stage": "F",
+    "name": "Collectives",
+    "method": "Correctness and performance by operation, size, ranks and transport.",
+    "boundary": "Do not mix algorithm bandwidth with bus bandwidth."
+  },
+  {
+    "id": "L05",
+    "stage": "F",
+    "name": "Fabric transport",
+    "method": "Actual NCCL/RDMA path, NIC affinity and supported GPUDirect tests.",
+    "boundary": "Fallback transport vs intended high-performance path."
+  },
+  {
+    "id": "L06",
+    "stage": "F",
+    "name": "NIC/switch health",
+    "method": "Authorized endpoint and operator-side error/congestion telemetry.",
+    "boundary": "Guest symptoms distinguished from fabric root cause."
+  },
+  {
+    "id": "L07",
+    "stage": "F",
+    "name": "Clock/trace alignment",
+    "method": "Measured clock uncertainty and monotonic local timing.",
+    "boundary": "Trustworthy stage/rank correlation without false causal order."
+  },
+  {
+    "id": "L08",
+    "stage": "F",
+    "name": "Controlled scale ladder",
+    "method": "Test available scales and jobs before extrapolating.",
+    "boundary": "Eight GPUs tested does not certify a thousand-GPU cluster."
+  },
+  {
+    "id": "L09",
+    "stage": "F",
+    "name": "Scheduler readiness",
+    "method": "Slurm/Kubernetes lifecycle and optional GCM/GPUd integration.",
+    "boundary": "Do not run diagnostics concurrently with unapproved tenant work."
+  },
+  {
+    "id": "L10",
+    "stage": "F",
+    "name": "BMC/PSU/cooling",
+    "method": "Read-only operator-authorized management-plane sensors.",
+    "boundary": "Rack/environment limitations considered separately from GPU defects."
+  },
+  {
+    "id": "L11",
+    "stage": "F",
+    "name": "Cluster/storage services",
+    "method": "Authorized throughput, checkpoints, metadata services and recovery tests.",
+    "boundary": "Bottlenecks and fault domains across the actual workflow."
+  },
+  {
+    "id": "L12",
+    "stage": "F",
+    "name": "Controlled maintenance actions",
+    "method": "Drain/cordon/ticket actions behind explicit approvals and rollback plans.",
+    "boundary": "No autonomous cross-cluster resets or destructive repair."
+  },
+  {
+    "id": "M01",
+    "stage": "Q",
+    "name": "Declared rental price",
+    "method": "Optional user input with currency and billing unit.",
+    "boundary": "Price supplied by user, not independently validated."
+  },
+  {
+    "id": "M02",
+    "stage": "S",
+    "name": "Reference-equivalent price",
+    "method": "Price divided by eligible same-workload performance ratio.",
+    "boundary": "Label equivalence scope; hide when reference is missing."
+  },
+  {
+    "id": "M03",
+    "stage": "F",
+    "name": "Cost per useful unit",
+    "method": "Successful output plus latency/error constraints and relevant charges.",
+    "boundary": "$/million tokens, image or step under tested conditions."
+  },
+  {
+    "id": "M04",
+    "stage": "O",
+    "name": "Scan cost",
+    "method": "Measured runtime plus declared price; bytes and storage stated.",
+    "boundary": "Software is free; testing still uses paid rental resources."
+  },
+  {
+    "id": "M05",
+    "stage": "F",
+    "name": "Hidden charges",
+    "method": "Documented storage, egress, minimum increments and stop-state costs.",
+    "boundary": "Declared vs observed charges remain separate."
+  },
+  {
+    "id": "M06",
+    "stage": "F",
+    "name": "Live alternatives",
+    "method": "Timestamped authorized feeds with comparable availability/configuration.",
+    "boundary": "Same SKU name alone is not a fair market comparison."
+  },
+  {
+    "id": "M07",
+    "stage": "F",
+    "name": "Keep/fix/switch decision",
+    "method": "Expected work remaining, retest/downtime/data-transfer costs.",
+    "boundary": "Performance improvement must exceed switching cost."
+  },
+  {
+    "id": "M08",
+    "stage": "Q",
+    "name": "Evidence-backed ticket",
+    "method": "Facts, reproduction, relevant reference and requested action.",
+    "boundary": "Ask for investigation/replacement; do not allege fraud from a score."
+  },
+  {
+    "id": "M09",
+    "stage": "F",
+    "name": "Outcome verification",
+    "method": "Post-fix/replacement retest with controlled configuration.",
+    "boundary": "Did the proposed action actually improve useful work?"
+  },
+  {
+    "id": "M10",
+    "stage": "F",
+    "name": "Fairness/audit",
+    "method": "Reference and rule versions, provider conflict disclosures.",
+    "boundary": "Payment never changes health gates or reference admission."
+  },
+  {
+    "id": "M11",
+    "stage": "F",
+    "name": "Return-policy applicability",
+    "method": "Current official policy, purchase type and source date.",
+    "boundary": "No guaranteed refund or universal dispute countdown."
+  }
+]

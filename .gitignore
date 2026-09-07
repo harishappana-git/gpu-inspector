@@ -1,0 +1,8 @@
+.DS_Store
+/bin/
+/dist/
+/build/
+/worker/build/
+/reports/
+*.prof
+coverage.out

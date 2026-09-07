@@ -1,0 +1,65 @@
+name: Development checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gri-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Reproduce the initial development toolchain; not a latest/security claim.
+  GOTOOLCHAIN: local
+
+jobs:
+  source-checks:
+    name: Go and CPU harness (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      # Official repository v7 refs verified 2026-09-06; pin complete commit IDs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.24.5'
+          check-latest: false
+          cache: false
+      - name: Unit and fixture tests
+        run: make test
+      - name: Race detector
+        run: make test-race
+      - name: Static analysis
+        run: make vet
+      - name: Build CLI
+        run: make build
+      - name: CPU known-answer and synthetic-corruption harness
+        run: make worker-cpu
+      - name: Linux native NVML adapter compile and tests
+        if: runner.os == 'Linux'
+        env:
+          CGO_ENABLED: '1'
+        run: |
+          go test ./internal/collect
+          go build -trimpath -o bin/gri-linux-native ./cmd/gri
+      - name: Linux amd64 cgo-free fallback build
+        run: make build-linux
+      - name: Synthetic CLI report workflow
+        run: |
+          ./bin/gri demo --scenario clean --output ./build/ci-demo-clean
+          ./bin/gri verify --report-dir ./build/ci-demo-clean
+          ./bin/gri export --report-dir ./build/ci-demo-clean --output ./build/ci-demo-share
+          ./bin/gri verify --report-dir ./build/ci-demo-share
+
+  # No deployment, production signing, provider credentials or GPU allocation.
+  # CUDA compilation and real-device acceptance are separate release gates.
