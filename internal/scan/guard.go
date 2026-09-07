@@ -182,6 +182,9 @@ func words(s string) string {
 }
 func exactSKU(name string, memory uint64) string {
 	text := words(name)
+	if (text == "geforce rtx 5080" || text == "rtx 5080") && memory >= 15<<30 && memory <= 17<<30 {
+		return "rtx-5080-16gb"
+	}
 	hasH100 := false
 	for _, token := range strings.Fields(text) {
 		if token == "h100" {
@@ -217,10 +220,19 @@ func boolInt(v bool) int {
 }
 func knownSKU(s string) bool {
 	switch s {
-	case "h100-pcie-80gb", "h100-sxm-80gb", "h100-nvl-94gb":
+	case "h100-pcie-80gb", "h100-sxm-80gb", "h100-nvl-94gb", "rtx-5080-16gb":
 		return true
 	}
 	return false
+}
+
+// RTX 5080 has no MIG capability. An explicit unsupported query for that exact
+// device is distinct from an unavailable query on a MIG-capable H100.
+func fullDeviceMode(d model.Device) bool {
+	mig := normalizeMIG(d.MIGMode)
+	migOK := mig == "disabled" || (mig == "unsupported" && d.SKU == "rtx-5080-16gb" && exactSKU(d.Name, d.MemoryBytes) == d.SKU)
+	virtualization := normalizeVirtualization(d.VirtualizationMode)
+	return migOK && (virtualization == "none" || virtualization == "passthrough")
 }
 func guardObservation(check, method, resource string, status model.Status, value any, message string) model.Observation {
 	return model.Observation{CheckID: check, ResourceID: resource, MethodID: method, Version: model.MethodVersion, StartUTC: time.Now().UTC(), Status: status, Value: value, SampleCount: 1, SourceKind: "reported", Visibility: "permitted allocation; host/driver mediated", Scope: resource, Message: message, Conditions: map[string]any{"derived": true}}
@@ -263,10 +275,10 @@ func GuardObservations(d *model.Device, expected string, devices []model.Device,
 	if d != nil && selectionErr == nil {
 		modes = map[string]string{"mig": d.MIGMode, "virtualization": d.VirtualizationMode}
 		modeStatus = model.Unsupported
-		modeMessage = "Active full-device qualification requires reported disabled MIG and none/passthrough virtualization; unknown, partitioned and vGPU modes remain unsupported."
-		if normalizeMIG(d.MIGMode) == "disabled" && (normalizeVirtualization(d.VirtualizationMode) == "none" || normalizeVirtualization(d.VirtualizationMode) == "passthrough") {
+		modeMessage = "Active full-device testing requires disabled MIG (or an explicitly non-MIG RTX 5080) and none/passthrough virtualization; unknown, partitioned and vGPU modes remain unsupported."
+		if fullDeviceMode(*d) {
 			modeStatus = model.Pass
-			modeMessage = "The selected device reports disabled MIG with none/passthrough virtualization; this is not an isolation or attestation certificate."
+			modeMessage = "The selected device reports a supported full-device mode with none/passthrough virtualization; this is not an isolation or attestation certificate."
 		}
 	}
 	out = append(out, guardObservation("A06", "guard.mode", resource, modeStatus, modes, modeMessage))
@@ -420,6 +432,24 @@ func Idle(pre []model.Observation) (bool, string) {
 		return false, "Neither usable utilization nor compute-process count is available; idle state remains unverified."
 	}
 	return true, "Available selected-device utilization/process observations meet the idle-start policy; hidden activity and subsequent contention remain possible."
+}
+
+// Busy consent relaxes only activity policy, never identity or sensor availability.
+func busyOverrideEligible(pre []model.Observation) bool {
+	resource, ok := stableResource(pre)
+	if !ok || contaminatedIdentity(pre, resource) {
+		return false
+	}
+	if observation, ok := passField(pre, resource, "utilization_gpu_percent"); ok {
+		if value, valid := number(observation.Value); valid && value >= 0 && value <= 100 {
+			return true
+		}
+	}
+	if observation, ok := passField(pre, resource, "compute_process_count"); ok {
+		_, valid := counter(observation.Value)
+		return valid
+	}
+	return false
 }
 
 // Safety returns stop=true only for a selected-resource safety/continuity gate.

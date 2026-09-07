@@ -23,6 +23,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -112,6 +113,7 @@ func scanCommand(ctx context.Context, args []string, out, stderr io.Writer) int 
 	f.StringVar(&o.WorkerManifest, "worker-manifest", "", "signed worker manifest envelope")
 	f.StringVar(&o.WorkerPublicKey, "worker-public-key", "", "explicitly trusted Ed25519 PEM key")
 	f.BoolVar(&o.AllowUnqualifiedWorker, "allow-unqualified-worker", false, "allow development acceptance work; readiness remains unqualified")
+	f.BoolVar(&o.AllowBusy, "allow-busy", false, "explicitly permit overlap with visible GPU activity; performance remains contaminated and uncalibrated")
 	f.StringVar(&o.ReferencePath, "reference", "", "signed qualified reference envelope")
 	f.StringVar(&o.ReferencePublicKey, "reference-public-key", "", "trusted reference Ed25519 PEM public key")
 	price := f.Float64("price-per-hour", 0, "optional user-declared rental price per hour")
@@ -365,12 +367,21 @@ func signCommand(args []string, out, stderr io.Writer) error {
 	fmt.Fprintln(out, "Signed exact payload bytes. Qualification is a separate evidence requirement.")
 	return nil
 }
+
+type stringList []string
+
+func (s *stringList) String() string         { return strings.Join(*s, ", ") }
+func (s *stringList) Set(value string) error { *s = append(*s, value); return nil }
+
 func manifestCommand(args []string, out, stderr io.Writer) error {
 	if len(args) == 0 || args[0] != "worker" {
 		return errors.New("usage: gri manifest worker --binary FILE --output FILE")
 	}
 	f := flags("manifest worker", stderr)
-	binary := f.String("binary", "", "Linux amd64 CUDA worker executable")
+	binary := f.String("binary", "", "CUDA worker executable")
+	platform := f.String("platform", runtime.GOOS+"-"+runtime.GOARCH, "worker build platform: linux-amd64 or windows-amd64")
+	var dependencies stringList
+	f.Var(&dependencies, "dependency", "Windows runtime DLL staged beside worker; repeat for each signed dependency")
 	dest := f.String("output", "", "new unsigned manifest file")
 	if err := parse(f, args[1:]); err != nil {
 		return err
@@ -378,12 +389,58 @@ func manifestCommand(args []string, out, stderr io.Writer) error {
 	if *binary == "" || *dest == "" {
 		return errors.New("binary and output are required")
 	}
+	if *platform != "linux-amd64" && *platform != "windows-amd64" {
+		return errors.New("unsupported worker platform")
+	}
+	if len(dependencies) > 0 && *platform != "windows-amd64" {
+		return errors.New("runtime DLL dependencies require windows-amd64")
+	}
+	if len(dependencies) > worker.MaxDependencies {
+		return errors.New("too many worker runtime dependencies")
+	}
 	data, err := bundle.ReadLimited(*binary, 128<<20)
 	if err != nil {
 		return err
 	}
 	digest := sha256.Sum256(data)
-	m := worker.Manifest{Kind: "gri-worker", Version: model.ToolVersion, MethodVersion: model.MethodVersion, Platform: "linux-amd64", File: filepath.Base(*binary), SHA256: hex.EncodeToString(digest[:]), Qualified: false, QualificationEvidence: []string{}}
+	m := worker.Manifest{Kind: "gri-worker", Version: model.ToolVersion, MethodVersion: model.MethodVersion, Platform: *platform, File: filepath.Base(*binary), SHA256: hex.EncodeToString(digest[:]), Qualified: false, QualificationEvidence: []string{}}
+	workerDir, err := filepath.Abs(filepath.Dir(*binary))
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var dependencyBytes int64
+	for _, path := range dependencies {
+		dir, err := filepath.Abs(filepath.Dir(path))
+		if err != nil {
+			return err
+		}
+		sameDir := dir == workerDir
+		if runtime.GOOS == "windows" {
+			sameDir = strings.EqualFold(dir, workerDir)
+		}
+		if !sameDir {
+			return errors.New("dependency must be staged beside the worker executable")
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Size() < 0 || info.Size() > worker.MaxDependencyBytes || dependencyBytes > worker.MaxDependencyTotalBytes-info.Size() {
+			return errors.New("worker runtime dependencies exceed aggregate size limit")
+		}
+		dependencyBytes += info.Size()
+		dependency, err := worker.DescribeDependency(path)
+		if err != nil {
+			return err
+		}
+		name := strings.ToLower(dependency.File)
+		if seen[name] {
+			return errors.New("duplicate runtime dependency")
+		}
+		seen[name] = true
+		m.Dependencies = append(m.Dependencies, dependency)
+	}
 	contents, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err

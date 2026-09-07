@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 type Options struct{ Ticket bool }
@@ -81,12 +82,8 @@ func WriteWithOptions(dir string, r model.Report, options Options) error {
 	if err = publish(dir, "evidence-index.json", data); err != nil {
 		return err
 	}
-	if directory, err := os.Open(dir); err == nil {
-		err = directory.Sync()
-		directory.Close()
-		if err != nil {
-			return err
-		}
+	if err := privatefs.SyncDir(dir); err != nil {
+		return err
 	}
 	return Verify(dir)
 }

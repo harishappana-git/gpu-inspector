@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 const (
@@ -93,40 +94,19 @@ func runDisk(ctx context.Context, opts Options) []model.Observation {
 	if err != nil || !info.IsDir() {
 		return diskMissing(contextStatus(ctx, err), start, "Explicit workspace is unavailable or is not a directory.")
 	}
-	file, err := os.CreateTemp(opts.Workspace, ".gri-pathcheck-*")
+	file, err := privatefs.CreateScratch(opts.Workspace)
 	if err != nil {
 		return diskMissing(contextStatus(ctx, err), start, "Could not create a test-owned scratch file in the explicit workspace.")
 	}
-	// Unlink before payload writes: descriptor ownership survives, and even a
-	// killed helper cannot leave a named scratch file. Never open another path
-	// for content, truncate an existing file, or scan directory contents.
-	owned, err := file.Stat()
-	if err != nil {
-		_ = file.Close()
-		return diskMissing(model.ToolError, start, "Could not verify ownership of the newly created scratch file.")
-	}
-	name := file.Name()
-	named, err := os.Lstat(name)
-	if err != nil || !os.SameFile(owned, named) {
-		_ = file.Close()
-		return diskMissing(model.Contaminated, start, "Scratch-file pathname changed before ownership verification; no payload was written and no replacement path was removed.")
-	}
-	if err = os.Remove(name); err != nil {
-		_ = file.Close()
-		// Some platforms cannot unlink an open file. Abort before payload writes,
-		// and remove only if the pathname still names this test's original inode.
-		if current, e := os.Lstat(name); e == nil && os.SameFile(owned, current) {
-			_ = os.Remove(name)
-		}
-		return diskMissing(contextStatus(ctx, err), start, "Could not unlink the test-owned scratch file before writes; active test aborted and owned-file cleanup attempted.")
-	}
+	// POSIX unlinks before writes; Windows uses an exclusive delete-on-close
+	// handle. Both paths retain only owned-handle I/O and OS process-exit cleanup.
 	defer file.Close()
 	measurements, err := exerciseFile(ctx, file, opts.DiskBytes)
 	status := model.Pass
 	if err != nil {
 		status = contextStatus(ctx, err)
 	}
-	conditions := map[string]any{"opt_in": true, "requested_bytes": opts.DiskBytes, "block_bytes": blockBytes, "scratch_mode": "0600, immediately unlinked, descriptor owned until close", "data_pattern": "splitmix64-v1; fixed public seed", "seed": uint64(0x4752495041544831), "direct_io": false, "cache_drop": false, "cache_method": "buffered writes followed by fsync and immediate buffered reread; OS cache may dominate", "parallelism": 1, "generation_and_hashing_in_timed_operations": false, "sync_in_write_throughput": true, "user_files_read": false, "payload_written_bytes": measurements.Written, "payload_read_bytes": measurements.Read, "complete": measurements.Complete}
+	conditions := map[string]any{"opt_in": true, "requested_bytes": opts.DiskBytes, "block_bytes": blockBytes, "scratch_mode": privatefs.ScratchMode, "data_pattern": "splitmix64-v1; fixed public seed", "seed": uint64(0x4752495041544831), "direct_io": false, "cache_drop": false, "cache_method": "buffered writes followed by fsync and immediate buffered reread; OS cache may dominate", "parallelism": 1, "generation_and_hashing_in_timed_operations": false, "sync_in_write_throughput": true, "user_files_read": false, "payload_written_bytes": measurements.Written, "payload_read_bytes": measurements.Read, "complete": measurements.Complete}
 	if err != nil {
 		conditions["failure_stage"] = measurements.FailureStage
 	}

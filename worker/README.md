@@ -1,10 +1,12 @@
 # CUDA worker development package
 
 This directory implements the isolated CUDA methods for Phase 1A. The current
-version is **0.1.0-dev**, with method version **1.0.0**. It is an unqualified
-development build: CPU checks pass on the development host; no CUDA compilation,
-Compute Sanitizer run, H100 measurement, rental isolation test, performance
-calibration, or signed production binary is represented by that result.
+version is **0.1.0-dev**, with method version **1.0.0**. The portable methods target
+Linux x86-64 H100 (SM90) and Windows x64 RTX 5080 (SM120). It remains an
+unqualified development build: compilation and local checks do not establish
+Compute Sanitizer qualification, H100 measurement, rental isolation, performance
+calibration, or a signed production release. See the qualification ledger and
+retained local validation logs for the exact checks that have actually run.
 
 The parent CLI owns capability discovery, selected-resource ownership and idle
 checks, telemetry safety stops, subprocess timeouts, signature verification,
@@ -24,8 +26,8 @@ ctest --test-dir build/worker-cpu --output-on-failure
 ```
 
 On a **Linux x86-64 H100 qualification machine**, build using an explicitly pinned
-CUDA Toolkit 12.0 or later. CMake targets SM90 machine code and SM90 PTX; runtime
-checks currently accept compute capability 9.0 only. Toolkit compatibility is a
+CUDA Toolkit 12.0 or later. Linux defaults to SM90 machine code and SM90 PTX;
+runtime checks accept compute capability 9.0 and 12.0. Toolkit compatibility is a
 build minimum, not a validated compatibility matrix.
 
 ```sh
@@ -35,6 +37,34 @@ cmake --build build/worker-cuda --parallel 2
 ctest --test-dir build/worker-cuda --output-on-failure
 ```
 
+For **Windows x64 RTX 5080**, use Visual Studio 2022 C++ build tools and Windows
+SDK, CMake 3.24+, and **CUDA Toolkit 12.8 or later including cuBLAS**. CUDA 12.8
+introduced SM120 compiler/library support. Use the compiler version supported by
+the selected toolkit; the local portable toolchain pins MSVC 14.38 and CUDA
+12.8.1. In an x64 developer PowerShell:
+
+```powershell
+cmake -S worker -B build/worker-windows -DGRI_BUILD_CUDA=ON `
+  -DGRI_CUDA_ARCHITECTURES="120-real;120-virtual"
+cmake --build build/worker-windows --config Release --parallel 2
+ctest --test-dir build/worker-windows -C Release --output-on-failure
+```
+
+MSVC warning flags and static host C++ runtime linkage are selected on Windows.
+CPU-only CTest uses the same commands with `-DGRI_BUILD_CUDA=OFF`. Multi-config
+generators need `--config Release` and `ctest -C Release`. Single-config builds
+default to Release so host readback validation fits the method budgets. For a
+dual-architecture CUDA 12.8+ build, set
+`-DGRI_CUDA_ARCHITECTURES="90-real;120-real;120-virtual"`.
+
+The RTX worker uses the GPU's reported memory capacity and L2 size at runtime;
+it does not substitute H100 capacities or baselines. Every existing method is
+available on both architectures, subject to runtime allocation, cuBLAS and
+driver checks. Unsupported operations retain structured unsupported results.
+Windows driver model (WDDM/TCC), kernel timeout state, architecture and OS are
+recorded. WDDM desktop scheduling can affect timings. The worker does not change
+Windows TDR settings, power limits, clocks, or driver mode.
+
 The executable links CUDA runtime and cuBLAS. It is not a fully static,
 driver-independent artifact. Pin the compiler, toolkit, runtime, cuBLAS, glibc,
 and driver versions in the release manifest; review their redistribution terms
@@ -42,9 +72,21 @@ before bundling libraries. Never build on the renter's machine as the default
 installation path. The release packaging layer must sign the actual executable
 and its qualified dependencies before a production installer uses it.
 
-The current Go launcher snapshots only the signed executable into a private
-directory and clears inherited loader environment variables. It does not copy
-or authenticate adjacent shared libraries. Consequently, `$ORIGIN` or sibling
+The Go launcher snapshots the signed executable into an owner-private
+directory and clears inherited loader environment variables. On Windows the
+signed manifest may bind up to 12 allowlisted adjacent runtime DLLs using
+`dependencies: [{"file":"cudart64_12.dll","sha256":"..."}]`. It authenticates
+and snapshots each dependency before starting the process. Each DLL is limited
+to 1 GiB, with an aggregate limit of 2 GiB; streaming avoids loading cuBLAS into
+the parent CLI's memory. Stage `cudart64_12.dll`, `cublas64_12.dll`, and
+`cublasLt64_12.dll` from the pinned toolkit beside the worker, then include each
+using `gri manifest worker --dependency PATH`. Needed allowlisted MSVC runtime
+DLLs can also be signed; GPU driver and Windows system DLLs remain system-owned.
+No ambient CUDA or user PATH is trusted. A manifest must match the actual host
+platform (`windows-amd64` or `linux-amd64`).
+
+On Linux the development launcher does not copy adjacent shared libraries.
+Consequently, `$ORIGIN` or sibling
 library layouts and `LD_LIBRARY_PATH`-dependent installs are not supported by
 this development packaging path. A compatible system CUDA/cuBLAS installation
 must be resolvable by its system loader configuration or an explicitly qualified
@@ -121,7 +163,7 @@ counted as a completed pass or full allocation coverage.
 | `fp32_gemm` | Dense column-major cuBLAS GEMM, FP32 operands/output/accumulator, `CUBLAS_COMPUTE_32F_PEDANTIC` and pedantic math; TFLOP/s counts exactly `2MNK`. |
 | `bf16_gemm` | BF16 operands and FP32 output/accumulator; `CUBLAS_COMPUTE_32F`; reduced-precision reduction disallowed. Tensor-core eligibility is distinct from independently proving generated instructions. |
 | `tf32_gemm` | FP32 operands/output, explicit `CUBLAS_COMPUTE_32F_FAST_TF32`, reduced-precision reduction disallowed. Integer known answers do not measure arbitrary-input TF32 accuracy. |
-| `hbm_copy` | Owned source/destination GPU copy kernel; each buffer at least twice reported L2; effective GB/s counts reads + writes (`2 * bytes`). All returned output words checked. |
+| `hbm_copy` | Legacy method ID for owned device-memory copy on both architectures; each buffer at least twice reported L2. Effective GB/s counts reads + writes (`2 * bytes`). SM90 retains `hbm_effective_copy_bandwidth`; SM120 reports `device_memory_effective_copy_bandwidth` (RTX 5080 is GDDR7). All returned output words checked. |
 | `working_set` | Cache-scale and above-L2 buffer sizes with strides 1/17; per-window size/stride/value retained. Mixed aggregate is ineligible for HBM reference scoring. |
 | `h2d`, `d2h` | Distinct pinned-host `cudaMemcpyAsync` paths; one-direction payload GB/s. Every transferred word is checked in each measured sample. NUMA binding is uncontrolled and disclosed. |
 | `dispatch_latency` | 128 separately synchronized one-thread increments; every result checked. Wall microseconds include event/synchronization overhead; event timings retained. |
@@ -169,4 +211,8 @@ neither layer promises to repair the host.
 - NVIDIA [Compute Sanitizer](https://docs.nvidia.com/compute-sanitizer/ComputeSanitizer/index.html): development checks for memory/race/init/synchronization errors.
 
 These references informed the source implementation. They do not qualify this
-worker or establish a healthy H100 performance envelope.
+worker or establish a healthy H100 or RTX 5080 performance envelope.
+
+- NVIDIA [CUDA 12.8 release notes](https://docs.nvidia.com/cuda/archive/12.8.0/cuda-toolkit-release-notes/index.html): Blackwell compiler/library support.
+- NVIDIA [Windows installation guide](https://docs.nvidia.com/cuda/archive/12.8.1/cuda-installation-guide-microsoft-windows/index.html): supported Windows/compiler toolchains.
+- NVIDIA [CUDA GPU capabilities](https://developer.nvidia.com/cuda/gpus): RTX 5080 compute capability 12.0.

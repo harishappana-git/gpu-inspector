@@ -61,5 +61,49 @@ jobs:
           ./bin/gri export --report-dir ./build/ci-demo-clean --output ./build/ci-demo-share
           ./bin/gri verify --report-dir ./build/ci-demo-share
 
+  windows-checks:
+    name: Native Windows Go and MSVC CPU harness
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.24.5'
+          check-latest: false
+          cache: false
+      - name: Unit, Windows ACL, process cleanup and fixture tests
+        run: go test ./...
+      - name: Race detector with runner GCC
+        env:
+          CGO_ENABLED: '1'
+          CC: gcc
+        run: go test -race ./...
+      - name: Static analysis
+        run: go vet ./...
+      - name: Build native CLI
+        run: go build -trimpath -o bin/gri.exe ./cmd/gri
+      - name: Configure MSVC CPU harness
+        run: cmake -S worker -B build/worker-cpu-windows -G "Visual Studio 17 2022" -A x64 -DGRI_BUILD_CUDA=OFF
+      - name: Build MSVC CPU harness
+        run: cmake --build build/worker-cpu-windows --config Release --parallel 2
+      - name: CPU known answers and synthetic corruption
+        run: ctest --test-dir build/worker-cpu-windows -C Release --output-on-failure
+      - name: Synthetic Windows report workflow
+        run: |
+          & ./bin/gri.exe demo --scenario clean --output ./build/ci-windows-demo-clean
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./bin/gri.exe verify --report-dir ./build/ci-windows-demo-clean
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./bin/gri.exe export --report-dir ./build/ci-windows-demo-clean --output ./build/ci-windows-demo-share
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./bin/gri.exe verify --report-dir ./build/ci-windows-demo-share
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   # No deployment, production signing, provider credentials or GPU allocation.
   # CUDA compilation and real-device acceptance are separate release gates.

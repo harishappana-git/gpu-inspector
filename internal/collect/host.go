@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -87,27 +88,34 @@ func counterMap(s string, allowed []string) (map[string]uint64, bool) {
 }
 
 func Host(ctx context.Context, opts Options) []model.Observation {
-	if runtime.GOOS != "linux" || opts.ProcRoot != "" || opts.SysRoot != "" {
+	if (runtime.GOOS != "linux" && runtime.GOOS != "windows") || opts.ProcRoot != "" || opts.SysRoot != "" {
 		return hostDirect(ctx, opts)
 	}
 	start := time.Now()
+	failure := func(status model.Status, message string) []model.Observation {
+		o := hostObs("E01", "collector", absent(status, message), start)
+		if runtime.GOOS == "windows" {
+			o.MethodID = "windows.collector"
+		}
+		return []model.Observation{o}
+	}
 	exe, err := os.Executable()
 	if err != nil {
-		return []model.Observation{hostObs("E01", "collector", absent(model.ToolError, "Cannot locate isolated OS helper."), start)}
+		return failure(model.ToolError, "Cannot locate isolated OS helper.")
 	}
 	b, status := run(ctx, exe, []string{"__collect-host", opts.Workspace}, timeout(opts), 1<<20)
 	if status != model.Pass {
-		return []model.Observation{hostObs("E01", "collector", absent(status, "Isolated OS collector unavailable or incomplete."), start)}
+		return failure(status, "Isolated OS collector unavailable or incomplete.")
 	}
 	var out []model.Observation
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.UseNumber()
 	if dec.Decode(&out) != nil {
-		return []model.Observation{hostObs("E01", "collector", absent(model.ToolError, "Invalid isolated OS collector response."), start)}
+		return failure(model.ToolError, "Invalid isolated OS collector response.")
 	}
 	for _, o := range out {
 		if !o.Status.Valid() {
-			return []model.Observation{hostObs("E01", "collector", absent(model.ToolError, "Invalid isolated OS observation status."), start)}
+			return failure(model.ToolError, "Invalid isolated OS observation status.")
 		}
 	}
 	return out
@@ -115,7 +123,7 @@ func Host(ctx context.Context, opts Options) []model.Observation {
 func hostDirect(ctx context.Context, opts Options) []model.Observation {
 	start := time.Now()
 	if runtime.GOOS != "linux" && opts.ProcRoot == "" {
-		return []model.Observation{hostObs("E01", "platform", absent(model.Unsupported, "Linux proc/sys/cgroup collectors are unavailable on this operating system."), start)}
+		return platformHost(ctx, opts, start)
 	}
 	if opts.ProcRoot == "" {
 		opts.ProcRoot = "/proc"
@@ -354,7 +362,7 @@ func cleanAbsolute(s string) (string, bool) {
 	if !strings.HasPrefix(s, "/") {
 		return "", false
 	}
-	p := filepath.Clean(s)
+	p := path.Clean(s)
 	for _, part := range strings.Split(s, "/") {
 		if part == ".." {
 			return "", false
@@ -432,7 +440,7 @@ func resolveCgroups(cg, mountinfo string) []cgroupMount {
 			} else {
 				continue
 			}
-			current := filepath.Join(mount, rel)
+			current := path.Join(mount, rel)
 			if current != mount && !strings.HasPrefix(current, mount+"/") {
 				continue
 			}
@@ -454,7 +462,7 @@ func ancestors(m cgroupMount) []string {
 		if p == m.Mountpoint {
 			break
 		}
-		next := filepath.Dir(p)
+		next := path.Dir(p)
 		if next == p || (!strings.HasPrefix(next, m.Mountpoint+"/") && next != m.Mountpoint) {
 			break
 		}

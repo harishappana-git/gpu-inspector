@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/processutil"
 )
 
 type Options struct {
@@ -47,9 +48,10 @@ type Contract struct {
 
 func Contracts() []Contract {
 	return []Contract{
-		{"nvml", "Unprivileged driver management access", "Linux NVIDIA; feature-dependent fields", "Read-only; isolated child; no device allocation", "Usually under 2 seconds; bounded by timeout", model.SchemaVersion, "Kill isolated helper on cancellation/deadline", "Allowlisted nvidia-smi queries"},
-		{"nvidia-smi", "Unprivileged executable and driver management access", "Linux NVIDIA; version-discovered query fields", "Read-only child process; no peer stress", "Usually under 3 seconds; bounded by timeout", model.SchemaVersion, "Kill child on cancellation/deadline; cap output", "Explicit missing/unsupported fields"},
+		{"nvml", "Unprivileged driver management access", "Linux and Windows NVIDIA; feature-dependent fields", "Read-only; isolated child; no device allocation", "Usually under 2 seconds; bounded by timeout", model.SchemaVersion, "Kill isolated helper on cancellation/deadline", "Allowlisted nvidia-smi queries"},
+		{"nvidia-smi", "Unprivileged executable and driver management access", "Linux and Windows NVIDIA; version-discovered query fields", "Read-only child process; no peer stress", "Usually under 3 seconds; bounded by timeout", model.SchemaVersion, "Kill child on cancellation/deadline; cap output", "Explicit missing/unsupported fields"},
 		{"linux-os", "Read access to allowlisted proc/sys/cgroup metadata", "Linux, cgroup v1/v2 with visibility limits", "Read-only; no process names, command lines, secrets, or network", "Usually under 100 milliseconds; bounded read sizes", model.SchemaVersion, "Context checked between file reads", "Explicit unsupported or denied fields"},
+		{"windows-os", "Unprivileged Windows system APIs", "Windows CPU, memory, uptime, workspace and interface context", "Read-only; no process names, command lines, secrets, or network traffic", "Usually under 100 milliseconds; bounded helper", model.SchemaVersion, "Kill isolated helper on cancellation/deadline", "Explicit unsupported Linux-only fields"},
 	}
 }
 
@@ -76,6 +78,7 @@ var gpuFields = []fieldSpec{
 	{"compute_capability", "A03", "compute_cap", ""}, {"mig_current", "A06", "mig.mode.current", ""}, {"mig_pending", "A06", "mig.mode.pending", ""},
 	{"virtualization_mode", "A06", "virtualization.mode", ""}, {"vbios", "A10", "vbios_version", ""}, {"part_number", "A02", "board.part_number", ""},
 	{"driver_version", "H01", "driver_version", ""}, {"nvml_version", "H01", "", ""}, {"cuda_driver_api_version", "H01", "", ""}, {"ecc_current", "B01", "ecc.mode.current", ""}, {"ecc_pending", "B01", "ecc.mode.pending", ""},
+	{"driver_model_current", "H01", "driver_model.current", ""}, {"driver_model_pending", "H01", "driver_model.pending", ""},
 	{"ecc_corrected_volatile", "B02", "ecc.errors.corrected.volatile.total", "errors"}, {"ecc_uncorrected_volatile", "B03", "ecc.errors.uncorrected.volatile.total", "errors"},
 	{"ecc_corrected_aggregate", "B02", "ecc.errors.corrected.aggregate.total", "errors"}, {"ecc_uncorrected_aggregate", "B03", "ecc.errors.uncorrected.aggregate.total", "errors"},
 	{"row_remap_corrected", "B04", "remapped_rows.correctable", "rows"}, {"row_remap_uncorrected", "B04", "remapped_rows.uncorrectable", "rows"},
@@ -134,8 +137,8 @@ func native(ctx context.Context, target string, opts Options) nativeResult {
 	return nativeMode(ctx, target, opts, "snapshot")
 }
 func nativeMode(ctx context.Context, target string, opts Options, mode string) nativeResult {
-	if runtime.GOOS != "linux" {
-		return nativeResult{Status: model.Unsupported, Message: "NVML collector requires Linux."}
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return nativeResult{Status: model.Unsupported, Message: "NVML collector requires Linux or Windows."}
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -367,22 +370,14 @@ func run(parent context.Context, binary string, args []string, limit time.Durati
 	ctx, cancel := context.WithTimeout(parent, limit)
 	defer cancel()
 	if !filepath.IsAbs(binary) {
-		found := ""
-		for _, dir := range []string{"/usr/local/nvidia/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"} {
-			candidate := filepath.Join(dir, binary)
-			info, err := os.Stat(candidate)
-			if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
-				found = candidate
-				break
-			}
-		}
+		found := trustedCollectorBinary(binary)
 		if found == "" {
 			return nil, model.DependencyMissing
 		}
 		binary = found
 	}
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = []string{"PATH=/usr/local/nvidia/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "LC_ALL=C", "LANG=C"}
+	cmd.Env = collectorEnvironment()
 	for _, key := range []string{"CUDA_VISIBLE_DEVICES", "CUDA_DEVICE_ORDER", "NVIDIA_VISIBLE_DEVICES"} {
 		if v, ok := os.LookupEnv(key); ok {
 			cmd.Env = append(cmd.Env, key+"="+v)
@@ -393,8 +388,7 @@ func run(parent context.Context, binary string, args []string, limit time.Durati
 	cmd.Stdout = out
 	cmd.Stderr = stderr
 	cmd.WaitDelay = 200 * time.Millisecond
-	prepareCollector(cmd)
-	err := cmd.Run()
+	err := processutil.Run(cmd)
 	if out.overflow || stderr.overflow {
 		return nil, model.ToolError
 	}

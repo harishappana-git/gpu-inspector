@@ -3,9 +3,10 @@ package collect
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"path"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,21 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if len(os.Args) == 3 && os.Args[1] == "__collector-fixture" {
+		switch os.Args[2] {
+		case "environment":
+			fmt.Print(strings.Join(os.Environ(), "\n"))
+		case "sleep":
+			time.Sleep(10 * time.Second)
+		case "overflow":
+			for {
+				_, _ = os.Stdout.Write([]byte("overflow"))
+			}
+		default:
+			os.Exit(2)
+		}
+		os.Exit(0)
+	}
 	if HandleInternalCommand(os.Args[1:]) {
 		os.Exit(0)
 	}
@@ -80,22 +96,25 @@ func TestVisibilityDoesNotGuessCUDAOrdinals(t *testing.T) {
 }
 
 func TestCollectorRunBoundsAndPrivacy(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix process fixture")
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("GRI_FIXTURE_SECRET", "sensitive-value")
 	t.Setenv("LD_PRELOAD", "injected-loader")
 	t.Setenv("CUDA_VISIBLE_DEVICES", "GPU-aaaa")
-	b, s := run(context.Background(), "/usr/bin/env", nil, time.Second, 4096)
+	// Race-instrumented Go helpers wait briefly at normal exit; this budget
+	// covers successful fixture shutdown without weakening cancellation checks.
+	b, s := run(context.Background(), exe, []string{"__collector-fixture", "environment"}, 5*time.Second, 4096)
 	if s != model.Pass || strings.Contains(string(b), "SECRET") || strings.Contains(string(b), "LD_PRELOAD") || !strings.Contains(string(b), "CUDA_VISIBLE_DEVICES=GPU-aaaa") {
 		t.Fatalf("allowlist failure: %s %q", s, b)
 	}
 	start := time.Now()
-	_, s = run(context.Background(), "/bin/sh", []string{"-c", "sleep 10"}, 40*time.Millisecond, 1024)
+	_, s = run(context.Background(), exe, []string{"__collector-fixture", "sleep"}, 40*time.Millisecond, 1024)
 	if s != model.TimeBudgetExhausted || time.Since(start) > 2*time.Second {
 		t.Fatalf("process group did not cancel: %s", s)
 	}
-	_, s = run(context.Background(), "/bin/sh", []string{"-c", "while :; do printf 'overflow'; done"}, time.Second, 64)
+	_, s = run(context.Background(), exe, []string{"__collector-fixture", "overflow"}, time.Second, 64)
 	if s != model.ToolError {
 		t.Fatalf("output overflow not rejected: %s", s)
 	}
@@ -127,8 +146,8 @@ func findField(t *testing.T, obs []model.Observation, key string) model.Observat
 
 func TestCgroupCurrentHierarchyAndAncestorLimits(t *testing.T) {
 	base := t.TempDir()
-	mount := filepath.Join(base, "cg")
-	current := filepath.Join(mount, "tenant-secret/job")
+	mount := filepath.ToSlash(filepath.Join(base, "cg"))
+	current := path.Join(mount, "tenant-secret/job")
 	for path, data := range map[string]string{
 		filepath.Join(mount, "cpu.max"): "max 100000", filepath.Join(mount, "memory.max"): "max",
 		filepath.Join(mount, "tenant-secret/cpu.max"): "150000 100000", filepath.Join(mount, "tenant-secret/memory.max"): "4096",
@@ -138,11 +157,14 @@ func TestCgroupCurrentHierarchyAndAncestorLimits(t *testing.T) {
 	} {
 		writeFixture(t, path, data)
 	}
-	mi := "22 1 0:28 / " + mount + " rw - cgroup2 cgroup rw"
+	// mountinfo always contains Linux paths, even when the parser test runs on
+	// Windows. Map its resolved location onto native temporary fixture files.
+	mi := "22 1 0:28 / /fixture-cg rw - cgroup2 cgroup rw"
 	mounts := resolveCgroups("0::/tenant-secret/job", mi)
-	if len(mounts) != 1 || mounts[0].Current != current {
+	if len(mounts) != 1 || mounts[0].Current != "/fixture-cg/tenant-secret/job" {
 		t.Fatalf("wrong membership mapping: %+v", mounts)
 	}
+	mounts[0].Current, mounts[0].Mountpoint = current, mount
 	obs := collectCgroups(hostReader{ctx: context.Background()}, mounts, time.Now())
 	cpu := findField(t, obs, "cgroup_cpu_entitlement").Value.(map[string]any)
 	if cpu["quota_cpu_equivalent"] != 1.5 {

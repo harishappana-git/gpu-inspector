@@ -3,6 +3,7 @@
 #include <cublas_v2.h>
 #include "json.hpp"
 #include "known_answer.hpp"
+#include "device_support.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -238,7 +239,7 @@ void memory_integrity(Result& result, std::size_t allowance) {
   result.coverage["completed_passes"] = 0;
   result.coverage["physical_memory_coverage"] = "unknown";
   result.metric_name = "pattern_fill_bandwidth"; result.unit = "GB/s";
-  result.limitations.emplace_back("Pattern fill speed is not an HBM benchmark; integrity checks cover owned logical bytes only.");
+  result.limitations.emplace_back("Pattern fill speed is not a device-memory bandwidth benchmark; integrity checks cover owned logical bytes only.");
   for (unsigned pass = 0; pass < passes; ++pass) {
     result.budget();
     const auto timing = measure([&] { fill_pattern<<<256, 256>>>(static_cast<uint32_t*>(device.data), bytes/4, pass, result.args.seed); });
@@ -341,11 +342,11 @@ void gemm(Result& result, std::size_t allowance) {
   }
 }
 
-void bandwidth(Result& result, std::size_t allowance, std::size_t l2_bytes) {
+void bandwidth(Result& result, std::size_t allowance, std::size_t l2_bytes, int architecture_major) {
   const bool sweep = result.args.method == "working_set";
   std::size_t bytes = allowance / 2;
   bytes -= bytes % (1024 * sizeof(uint32_t));
-  if (!l2_bytes) throw Failure("unsupported", "l2_size_unavailable_for_hbm_method");
+  if (!l2_bytes) throw Failure("unsupported", "l2_size_unavailable_for_memory_bandwidth_method");
   // Each of the two buffers is at least twice L2; combined working set >=4x L2.
   if (bytes < 2 * l2_bytes) throw Failure("blocked", "memory_cap_too_small_to_exceed_l2");
   DeviceBuffer source(bytes), destination(bytes);
@@ -359,7 +360,8 @@ void bandwidth(Result& result, std::size_t allowance, std::size_t l2_bytes) {
   result.conditions["validation_granularity"] = "final content after each batch of 8 identical-input copies";
   result.coverage["allocated_bytes"] = 2 * bytes;
   result.coverage["physical_memory_coverage"] = "unknown";
-  result.metric_name = sweep ? "working_set_copy" : "hbm_effective_copy_bandwidth"; result.unit = "GB/s";
+  result.metric_name = sweep ? "working_set_copy" : gri::memory_bandwidth_metric(architecture_major); result.unit = "GB/s";
+  result.conditions["memory_bandwidth_method_id"] = "hbm_copy is the legacy ID for architecture-specific device-memory copy";
   std::vector<std::size_t> sizes = sweep ? std::vector<std::size_t>{std::min(bytes, std::max(std::size_t(4096), l2_bytes/4/4096*4096)), bytes} : std::vector<std::size_t>{bytes};
   std::vector<Json> windows;
   const unsigned repetitions = result.args.tier == "standard" ? 12 : 5;
@@ -374,12 +376,13 @@ void bandwidth(Result& result, std::size_t allowance, std::size_t l2_bytes) {
       const auto value = (2.0 * size * 8) / (timing.first * 1e6);
       result.add_sample(value, timing.first, timing.second);
       windows.push_back(Json::object({{"sample_index", result.samples.size()-1}, {"bytes", size}, {"stride_words", stride}, {"value_gb_s", value}, {"working_set_exceeds_l2", size > l2_bytes}}));
+      result.coverage["windows"] = Json::array(windows);
     }
   }
   result.coverage["windows"] = Json::array(windows);
   if (sweep) {
     result.conditions["mixed_working_sets"] = true;
-    result.limitations.emplace_back("Working-set samples have different sizes/strides; the aggregate median is descriptive only and ineligible for HBM reference scoring.");
+    result.limitations.emplace_back("Working-set samples have different sizes/strides; the aggregate median is descriptive only and ineligible for device-memory reference scoring.");
   }
 }
 
@@ -452,14 +455,24 @@ void run(Result& result) {
   // collector must first map its resource and set the exact UUID in child env.
   if (visible && std::string(visible) != result.args.device)
     throw Failure("blocked", "cuda_visible_devices_must_equal_selected_uuid");
+#ifdef _WIN32
+  if (_putenv_s("CUDA_VISIBLE_DEVICES", result.args.device.c_str()) != 0)
+#else
   if (setenv("CUDA_VISIBLE_DEVICES", result.args.device.c_str(), 1) != 0)
+#endif
     throw Failure("blocked", "cannot_restrict_cuda_visibility");
   int count = 0; cuda_check(cudaGetDeviceCount(&count), "cudaGetDeviceCount");
   if (count != 1) throw Failure("blocked", "selected_resource_not_unique");
   cudaDeviceProp properties{};
   cuda_check(cudaGetDeviceProperties(&properties, 0), "cudaGetDeviceProperties");
   if (uuid_string(properties.uuid) != result.args.device) throw Failure("blocked", "selected_uuid_changed");
-  if (properties.major != 9 || properties.minor != 0) throw Failure("unsupported", "architecture_not_in_initial_sm90_build");
+  if (!gri::supported_architecture(properties.major, properties.minor))
+    throw Failure("unsupported", "architecture_not_supported_by_worker");
+  int runtime_version = 0, driver_version = 0;
+  cuda_check(cudaRuntimeGetVersion(&runtime_version), "cudaRuntimeGetVersion");
+  cuda_check(cudaDriverGetVersion(&driver_version), "cudaDriverGetVersion");
+  if (properties.major == 12 && runtime_version < 12080)
+    throw Failure("unsupported", "sm120_requires_cuda_runtime_12_8_or_later");
   cuda_check(cudaSetDevice(0), "cudaSetDevice");
   cuda_check(cudaFree(nullptr), "cuda_context_initialize");
   cudaDeviceProp rechecked{};
@@ -470,24 +483,33 @@ void run(Result& result) {
   const std::size_t reserve = std::max(std::size_t(512)*MiB, total_bytes/10);
   if (free_bytes <= reserve + MiB) throw Failure("blocked", "insufficient_free_memory_reserve");
   const auto allowance = std::min(std::size_t(result.args.memory_mib)*MiB, free_bytes-reserve);
-  int runtime_version = 0, driver_version = 0;
-  cuda_check(cudaRuntimeGetVersion(&runtime_version), "cudaRuntimeGetVersion");
-  cuda_check(cudaDriverGetVersion(&driver_version), "cudaDriverGetVersion");
   result.conditions = {{"seed", result.args.seed}, {"tier", result.args.tier}, {"budget_ms", result.args.budget_ms},
     {"memory_cap_bytes", std::size_t(result.args.memory_mib)*MiB}, {"device_memory_free_bytes_before", free_bytes},
     {"device_memory_total_bytes", total_bytes}, {"device_memory_reserve_bytes", reserve}, {"allocation_allowance_bytes", allowance},
     {"scope", "one_selected_visible_full_gpu"}, {"selected_uuid_rechecked", true}, {"visible_device_count", count},
-    {"runtime_version", runtime_version}, {"cuda_driver_api_version", driver_version}, {"compute_capability", "9.0"},
+    {"runtime_version", runtime_version}, {"cuda_driver_api_version", driver_version},
+    {"compute_capability", std::to_string(properties.major) + "." + std::to_string(properties.minor)},
+    {"architecture_family", gri::architecture_family(properties.major, properties.minor)},
+    {"device_name", properties.name}, {"device_memory_technology", gri::memory_technology(properties.name)},
+    {"memory_technology_source", "reported product name; CUDA runtime does not independently expose memory technology"},
+    {"kernel_execution_timeout_enabled", properties.kernelExecTimeoutEnabled != 0},
     {"device_sm_count", properties.multiProcessorCount}, {"device_l2_bytes", properties.l2CacheSize},
     {"device_warp_size", properties.warpSize}, {"device_max_threads_per_block", properties.maxThreadsPerBlock},
     {"worker_qualification", "pending_real_gpu_acceptance"}, {"sample_independence", "correlated_repetitions_on_one_allocation"}};
   result.cold_start_ms = elapsed_ms(result.start);
+#ifdef _WIN32
+  result.conditions["worker_os"] = "windows";
+  result.conditions["windows_driver_model"] = properties.tccDriver ? "TCC" : "WDDM";
+  result.limitations.emplace_back("Windows WDDM scheduling and display workloads can affect timing and available memory; no driver timeout settings are changed. Compare only matching OS/driver-model references.");
+#else
+  result.conditions["worker_os"] = "linux";
+#endif
   result.limitations.emplace_back("Development worker: no real-GPU numerical, sanitizer, timing-budget or isolation qualification is asserted by this build.");
   result.limitations.emplace_back("The parent scanner enforces ownership, idle/safety telemetry and a hard process timeout. A blocked driver wait may outlive userspace cancellation.");
   result.budget(100);
   if (result.args.method == "memory_integrity") memory_integrity(result, allowance);
   else if (result.args.method == "fp32_gemm" || result.args.method == "bf16_gemm" || result.args.method == "tf32_gemm") gemm(result, allowance);
-  else if (result.args.method == "hbm_copy" || result.args.method == "working_set") bandwidth(result, allowance, properties.l2CacheSize > 0 ? std::size_t(properties.l2CacheSize) : 0);
+  else if (result.args.method == "hbm_copy" || result.args.method == "working_set") bandwidth(result, allowance, properties.l2CacheSize > 0 ? std::size_t(properties.l2CacheSize) : 0, properties.major);
   else if (result.args.method == "h2d" || result.args.method == "d2h") transfer(result, allowance);
   else if (result.args.method == "dispatch_latency") dispatch_latency(result);
 }

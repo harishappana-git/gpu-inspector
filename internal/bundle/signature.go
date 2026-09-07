@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 const MaxDocumentBytes = 4 << 20
@@ -208,12 +210,8 @@ func LoadPublicKey(path string) (ed25519.PublicKey, error) {
 	return key, nil
 }
 func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
-	info, err := os.Stat(path)
-	if err != nil {
+	if err := privatefs.CheckFile(path); err != nil {
 		return nil, err
-	}
-	if info.Mode().Perm()&0077 != 0 {
-		return nil, errors.New("private key permissions must be 0600 or stricter")
 	}
 	data, err := ReadLimited(path, 16384)
 	if err != nil {
@@ -234,7 +232,7 @@ func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
 	return key, nil
 }
 func GenerateKeys(dir string) error {
-	if err := os.Mkdir(dir, 0700); err != nil {
+	if err := privatefs.Mkdir(dir); err != nil {
 		return fmt.Errorf("key directory must be new: %w", err)
 	}
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -255,7 +253,7 @@ func GenerateKeys(dir string) error {
 	return WriteNew(dir+"/public.pem", pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}), 0600)
 }
 func WriteNew(path string, data []byte, mode os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	f, err := privatefs.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/harishappana/gpu-inspector/internal/bundle"
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 func fixture() model.Report {
@@ -44,16 +46,12 @@ func TestWritePrivateIntegrityAndNoCircularHashes(t *testing.T) {
 	if err := Verify(dir); err != nil {
 		t.Fatal(err)
 	}
-	if info, _ := os.Stat(dir); info.Mode().Perm() != 0700 {
-		t.Fatalf("directory mode: %v", info.Mode())
+	if err := privatefs.CheckDir(dir); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range []string{"report.json", "report.html", "guide.md", "evidence-index.json"} {
-		info, err := os.Stat(filepath.Join(dir, name))
-		if err != nil {
+		if err := privatefs.CheckFile(filepath.Join(dir, name)); err != nil {
 			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0600 {
-			t.Fatalf("%s mode %v", name, info.Mode())
 		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "ticket.md")); !os.IsNotExist(err) {
@@ -85,10 +83,10 @@ func TestJournalAndTicketTriggers(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "blocker", true: "request"}[explicit], func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Chmod(dir, 0700); err != nil {
+			if err := privatefs.Chmod(dir); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "evidence.jsonl"), []byte("{\"measurement_id\":\"obs-1\"}\n"), 0600); err != nil {
+			if err := bundle.WriteNew(filepath.Join(dir, "evidence.jsonl"), []byte("{\"measurement_id\":\"obs-1\"}\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			r := fixture()
@@ -165,7 +163,7 @@ func TestIntegrityDetectsTamperingUnknownFilesAndSymlinks(t *testing.T) {
 			return os.WriteFile(filepath.Join(dir, "report.html"), []byte("tampered"), 0600)
 		},
 		"unexpected file": func(dir string) error { return os.WriteFile(filepath.Join(dir, "secret.txt"), []byte("secret"), 0600) },
-		"public file":     func(dir string) error { return os.Chmod(filepath.Join(dir, "report.json"), 0644) },
+		"public file":     func(dir string) error { return makePublic(filepath.Join(dir, "report.json")) },
 		"symlink": func(dir string) error {
 			path := filepath.Join(dir, "report.html")
 			if err := os.Remove(path); err != nil {
@@ -189,13 +187,16 @@ func TestIntegrityDetectsTamperingUnknownFilesAndSymlinks(t *testing.T) {
 	for name, change := range cases {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.Chmod(dir, 0700); err != nil {
+			if err := privatefs.Chmod(dir); err != nil {
 				t.Fatal(err)
 			}
 			if err := Write(dir, fixture()); err != nil {
 				t.Fatal(err)
 			}
 			if err := change(dir); err != nil {
+				if name == "symlink" && unsupportedSymlink(err) {
+					t.Skip("Windows file-symlink creation privilege unavailable; privatefs tests cover directory junction rejection")
+				}
 				t.Fatal(err)
 			}
 			if err := Verify(dir); err == nil {
@@ -221,7 +222,7 @@ func TestExportScrubsSecretsAndRebuildsJournal(t *testing.T) {
 	if err := privateDir(source); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(source, "evidence.jsonl"), []byte("RAW_ORIGINAL_JOURNAL_SECRET\n"), 0600); err != nil {
+	if err := bundle.WriteNew(filepath.Join(source, "evidence.jsonl"), []byte("RAW_ORIGINAL_JOURNAL_SECRET\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteWithOptions(source, r, Options{Ticket: true}); err != nil {
@@ -273,10 +274,10 @@ func TestExportScrubsSecretsAndRebuildsJournal(t *testing.T) {
 
 func TestPublicDirectoryRejected(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Chmod(dir, 0755); err != nil {
+	if err := makePublic(dir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(dir, 0700)
+	defer privatefs.Chmod(dir)
 	if err := Write(dir, fixture()); err == nil {
 		t.Fatal("accepted publicly readable report directory")
 	}
@@ -390,7 +391,7 @@ func TestReadRejectsDuplicateJSONMembersIncludingEscapedNames(t *testing.T) {
 	for _, key := range []string{`"verdict"`, `"\u0076erdict"`} {
 		path := filepath.Join(t.TempDir(), "report.json")
 		duplicate := []byte("{" + key + `: "KEEP",` + string(data[1:]))
-		if err := os.WriteFile(path, duplicate, 0600); err != nil {
+		if err := bundle.WriteNew(path, duplicate, 0600); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := Read(path); err == nil {
@@ -430,5 +431,37 @@ func TestTicketRetainsIndependentFindingsWithSameObservation(t *testing.T) {
 	ticket := TicketDraft(r)
 	if strings.Count(ticket, first.Observation) != 2 || !strings.Contains(ticket, first.ID) || !strings.Contains(ticket, second.ID) {
 		t.Fatal("ticket collapsed independent invocation findings with identical text")
+	}
+}
+
+func TestWindowsPathsRedactedAndPowerShellGuideIsStatic(t *testing.T) {
+	r := fixture()
+	r.Observations[0].Conditions = map[string]any{
+		"private_path": `C:\Users\Example Person\private model\weights.bin`,
+		"workspace":    `\\private-server\private-share\Example Person\weights.bin`,
+	}
+	r.Observations[0].Message = `Observed "C:\Users\Other Person\secret dataset\weights.bin" and '\\other-server\private-share\other secret\data.bin'; C:/Users/forward-user/private.bin is unavailable.`
+	redacted, err := Redact(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"Example Person", "private model", "private-server", "private-share", "Other Person", "secret dataset", "other-server", "other secret", "forward-user"} {
+		if strings.Contains(string(data), secret) {
+			t.Errorf("Windows path fragment leaked: %s", secret)
+		}
+	}
+	r.Device.UUID = `GPU-'; Write-Output INJECTED_COMMAND; #`
+	guide := Guide(r)
+	if !strings.Contains(guide, "```powershell") || !strings.Contains(guide, "gri.exe verify") || !strings.Contains(guide, "gri.exe scan") {
+		t.Fatal("Windows guide commands missing")
+	}
+	for i, block := range strings.Split(guide, "```") {
+		if i%2 == 1 && strings.Contains(block, "INJECTED_COMMAND") {
+			t.Fatal("untrusted value interpolated into shell source")
+		}
 	}
 }

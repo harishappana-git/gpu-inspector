@@ -313,7 +313,7 @@ func TestJournalPropagatesAssignedIDsIntoSourceBoundaries(t *testing.T) {
 }
 
 func TestTargetLockExcludesConcurrentRemappedIndexAndCanRetry(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		t.Skip("file locks unsupported")
 	}
 	root := filepath.Join(t.TempDir(), "locks")
@@ -401,7 +401,7 @@ func TestRunRetainsExistingOutputAndReleasesTargetLock(t *testing.T) {
 }
 
 func TestTargetLockUUIDCaseCannotBypassExclusion(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
 		t.Skip("file locks unsupported")
 	}
 	root := filepath.Join(t.TempDir(), "locks")

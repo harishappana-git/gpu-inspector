@@ -1,12 +1,14 @@
 # GPU Rental Inspector
 
+Local Windows/RTX 5080 implementation results, measured scope and rerun commands are recorded in [Windows RTX 5080 validation](docs/WINDOWS_RTX5080_VALIDATION.md).
+
 GPU Rental Inspector (`gri`) is a local development CLI for examining **one selected NVIDIA GPU allocation** and its visible execution environment. It implements the Phase 1 source workflow in [Design v2.0](GPU_Rental_Inspector_Design_v2_0.md): bounded collection, isolated CUDA-worker integration, explicit missing-data states, deterministic assessment, private local reports and support drafts. Optional bounded workspace and HTTPS-object checks cover the Phase 1B extension.
 
 **Current release state: development implementation, not qualified for production GPU acceptance.** No real H100 rental measurement, healthy-reference pack, production signing key or signed production worker is included. The development CUDA worker is explicitly unqualified. Reports with missing methods or calibration remain `INCONCLUSIVE` / `UNCALIBRATED`, with a null score. Passing software fixtures is not GPU qualification. Remaining work is tracked in [Implementation status](docs/IMPLEMENTATION_STATUS.md) and [Acceptance runbook](docs/ACCEPTANCE.md).
 
 ## Build and try the local workflow
 
-The Go module requires Go 1.24 or later. The development and CI reproduction pin is **Go 1.24.5**, matching the initial development host; this pin is not a statement about current security support. The CLI uses the Go standard library. CMake 3.24+, a C++17 compiler and an explicitly qualified CUDA installation are separate worker-build dependencies.
+The Go module requires Go 1.24 or later. The development and CI reproduction pin is **Go 1.24.5**, matching the initial development host; this pin is not a statement about current security support. The CLI uses the Go standard library and pinned `golang.org/x/sys` Windows APIs. CMake 3.24+, a C++17 compiler and CUDA/cuBLAS are separate worker-build dependencies.
 
 ```sh
 make build
@@ -37,6 +39,26 @@ The scanner auto-selects only when permitted visibility resolves to one unambigu
 
 The UUID is a placeholder for the intended allocation. Numeric CUDA visibility masks are resolved through runtime enumeration rather than treated as management indices. Ambiguous mappings, MIG partitions, target changes and unsupported execution remain explicit limitations. macOS supports development, fixtures and degraded-mode reports; it is not the CUDA measurement target.
 
+### Native Windows and RTX 5080
+
+Windows x64 supports the existing CLI workflow: discovery and telemetry, bounded Quick/Standard scans, signed worker admission, all nine existing CUDA methods, cancellation, reports, verification, replay, export, local tickets, signing, cleanup and opted-in disk/HTTPS checks. The RTX 5080 worker targets SM120 and uses the card's reported capacity and cache size. Linux H100 builds retain SM90 and their separate qualification requirements. RTX results and references cannot stand in for H100 results.
+
+Build and try the CLI in PowerShell with Go on `PATH`:
+
+```powershell
+go build -trimpath -o ./bin/gri.exe ./cmd/gri
+./bin/gri.exe version
+./bin/gri.exe demo --scenario clean --output ./reports/windows-demo-001
+./bin/gri.exe verify --report-dir ./reports/windows-demo-001
+./bin/gri.exe scan --tier quick --expected-sku rtx-5080-16gb --output ./reports/windows-quick-001
+```
+
+GPU methods additionally need Visual Studio 2022 C++ tools/Windows SDK, CMake and **CUDA Toolkit 12.8+ including cuBLAS**, using a compiler supported by that toolkit. In an x64 developer PowerShell, run `./scripts/build-windows.ps1 -CudaRoot $env:CUDA_PATH`; `-CPUOnly` builds the CLI and CPU harness without CUDA. See the [Windows build script](scripts/build-windows.ps1), [worker dependency instructions](worker/README.md) and [local acceptance procedure](docs/ACCEPTANCE.md). Sign the worker and its required adjacent CUDA runtime DLLs using repeated `manifest worker --dependency PATH` options, then supply `--worker`, `--worker-manifest`, `--worker-public-key` and `--allow-unqualified-worker` to a controlled scan. The manifest's platform defaults to the current OS/architecture; `--platform linux-amd64` or `--platform windows-amd64` declares a cross-built worker.
+
+Windows process control uses owned Job Objects and per-device exclusion. Private evidence and keys use protected current-user-only Windows DACLs; verification rejects public permissions and junction/reparse redirects. Disk scratch uses an exclusive delete-on-close handle, including cleanup after process termination. File data is flushed before publication; Windows does not claim POSIX directory-fsync power-loss durability.
+
+Hardware and OS capabilities remain explicit: the RTX 5080 has no MIG partitions, and unavailable ECC/remap fields are unsupported. Linux cgroups, PSI, `/dev/shm` and POSIX limits do not apply to Windows; native Windows memory, CPU, storage and interface context are collected where available. WDDM desktop processes can block the idle guard. Operators explicitly accepting desktop contention for development testing can use `--allow-busy`; primary performance evidence is marked `CONTAMINATED` while separate correctness observations remain available. Tests never change TDR, clocks, power limits or driver mode. Existing diagnostic gaps listed below remain gaps on both platforms. Reports stay uncalibrated until actual worker qualification and independently acquired matching healthy references are available.
+
 Without an explicitly supplied signed worker, a scan collects available management/OS context and records active CUDA methods as unavailable. Supplying a worker enables bounded GPU work, which consumes rental time. The scanner owns target checks, deadlines, stop conditions and evidence; the [worker package](worker/README.md) defines numerical and memory-coverage boundaries.
 
 An inconclusive scan deliberately exits **3** after saving its report. Scan exit codes are `0` for keep/keep-with-caveats, `1` for an operational or usage error, `2` for do-not-start, `3` for inconclusive, and `130` for cancellation with a partial report. Check the reported artifact path and run `gri verify`; a nonzero decision code does not itself mean report generation failed. Demo and replay commands return `0` when their artifact workflow succeeds, independently of the displayed verdict.
@@ -57,7 +79,7 @@ Run a command with `--help` for its current argument contract.
 | `gri replay --report DIR/report.json --output NEW_DIR` | Verify retained evidence and reevaluate it with current rules into a linked new report, preserving the original interval. No new hardware work occurs. Optional `--reference` and `--reference-public-key` must be supplied together. |
 | `gri cleanup --report-dir DIR` | Verify ownership/integrity and remove known report artifacts. This does not terminate a rental or delete arbitrary directory contents. |
 | `gri keys generate --output NEW_DIR` | Generate a local Ed25519 signing key pair for trusted development use. |
-| `gri manifest worker --binary FILE --output FILE` | Create an unsigned, unqualified manifest for the executable bytes. |
+| `gri manifest worker --binary FILE --output FILE` | Create an unsigned, unqualified manifest for the executable bytes; optional `--platform` declares the target and repeated `--dependency FILE` binds adjacent Windows runtime DLLs. |
 | `gri sign --input FILE --key PRIVATE_PEM --output FILE` | Sign a payload into a local envelope. A signature does not establish qualification. |
 | `gri version` | Print the development tool version. |
 
@@ -70,6 +92,7 @@ Run a command with `--help` for its current argument contract.
 | `--output`, `--workspace` | New private evidence directory and explicit workspace for capacity/context or opted-in scratch testing. |
 | `--worker`, `--worker-manifest`, `--worker-public-key` | CUDA executable, signed manifest envelope and independently trusted Ed25519 public key. |
 | `--allow-unqualified-worker` | Development acceptance-test opt-in. It does not enable calibrated acceptance or promote the development worker to qualified status. |
+| `--allow-busy` | Explicit development opt-in to test a contended device, such as a WDDM desktop; primary performance evidence is contaminated and cannot support calibrated scoring. |
 | `--reference`, `--reference-public-key` | Signed healthy-reference envelope and trusted public key. No healthy pack is bundled. |
 | `--price-per-hour`, `--currency` | Optional user-declared price context; no market feed or refund guarantee. |
 | `--max-temperature-c` | Optional user-selected safety ceiling, not a universal device-defect threshold. |
@@ -82,7 +105,7 @@ Runs preserve states including `PASS`, `FAIL`, `NOT_TESTED`, `UNSUPPORTED`, `PER
 
 The resulting action is `KEEP`, `KEEP WITH CAVEATS`, `DO NOT START / REQUEST FIX OR REPLACEMENT`, or `INCONCLUSIVE`. Required correctness/resource gates override scores. A score needs all five eligible exact-method measurements and a qualified matching reference; missing weights are not renormalized. Unconfirmed failures, historical counters, disclosed power caps and exposure observations retain distinct meanings. Brief guest-visible measurements do not certify device authenticity, future lifetime, workload fit or a cluster.
 
-Reports contain `report.html`, `report.json`, `guide.md`, `evidence-index.json`, and the normalized `evidence.jsonl` journal. A blocker or explicit request creates `ticket.md`. HTML uses no remote scripts, fonts or tracking. Hashes detect changed bytes; they do not authenticate the host or replace signatures. Files use `0600` permissions in a `0700` directory. Interrupted runs retain available observations and mark unfinished work explicitly.
+Reports contain `report.html`, `report.json`, `guide.md`, `evidence-index.json`, and the normalized `evidence.jsonl` journal. A blocker or explicit request creates `ticket.md`. HTML uses no remote scripts, fonts or tracking. Hashes detect changed bytes; they do not authenticate the host or replace signatures. POSIX files use `0600` permissions in a `0700` directory; Windows uses protected owner-only DACLs. Interrupted runs retain available observations and mark unfinished work explicitly.
 
 ```sh
 ./bin/gri export --report-dir ./reports/quick-001 --output ./reports/quick-001-share
@@ -104,9 +127,9 @@ make worker-cpu
 make build-linux
 ```
 
-`make build-linux` produces a Linux amd64 **cgo-free fallback** binary. Native Linux `CGO_ENABLED=1` builds compile the dynamic NVML adapter; runtime NVIDIA libraries are still needed. `make worker-cuda CUDA_ROOT=/path/to/pinned/cuda` targets an authorized Linux x86-64 H100 qualification environment. CUDA compilation, numerical validation, sanitizer runs, reference acquisition and real-rental acceptance remain open gates.
+`make build-linux` produces a Linux amd64 **cgo-free fallback** binary. Native Linux `CGO_ENABLED=1` builds compile the dynamic NVML adapter; runtime NVIDIA libraries are still needed. `make worker-cuda CUDA_ROOT=/path/to/pinned/cuda` defaults to the Linux SM90 H100 qualification target. Windows builds use MSVC and default to SM120; explicit CMake architecture settings can build both. Real-device numerical qualification, sanitizer runs, reference acquisition and rental acceptance remain separate gates for each declared GPU/platform configuration.
 
-`make release-check` runs local software checks and builds only. It does not sign, publish, deploy, provision a GPU, acquire a reference or approve a release. CI runs development checks on Linux/macOS without GPU hardware; a configured workflow is not evidence of a passed remote run.
+`make release-check` runs local software checks and builds only. It does not sign, publish, deploy, provision a GPU, acquire a reference or approve a release. CI is configured for Linux/macOS and native Windows Go tests, race detection, vet, CLI builds and CPU harnesses without GPU hardware; a configured workflow is not evidence of a passed remote run. Windows race detection needs a compatible GCC C toolchain in addition to Go; the MSVC CPU harness is a separate check.
 
 Some diagnostics remain absent beyond the unqualified CUDA implementation: no DCGM execution (`B11`), complete Xid-history collector (`B06`), FP8/INT8 worker (`C04`), controlled NUMA-transfer experiment (`D10`), versioned driver-advisory matcher (`H04`) or signed OEM/VBIOS comparison (`A10`) is implemented. Reported VBIOS text remains metadata, not a consistency pass. See the explicit gaps in [Implementation status](docs/IMPLEMENTATION_STATUS.md).
 
@@ -117,7 +140,7 @@ Some diagnostics remain absent beyond the unqualified CUDA implementation: no DC
 | Read-only NVIDIA/host adapters | `internal/collect` |
 | Process isolation and worker protocol | `internal/secureexec`, `internal/worker`, `worker` |
 | Signatures and reference matching | `internal/bundle`, `internal/reference` |
-| Assessment and local reports | `internal/rules`, `internal/report` |
+| Assessment and local reports | `internal/rules`, `internal/report`, `internal/privatefs` |
 | Explicit path extensions | `internal/pathcheck` |
 
 Read [Implementation status](docs/IMPLEMENTATION_STATUS.md) before making a product claim and [Acceptance runbook](docs/ACCEPTANCE.md) before real-H100 qualification.

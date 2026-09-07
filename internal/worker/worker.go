@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,24 +21,27 @@ import (
 
 	"github.com/harishappana/gpu-inspector/internal/bundle"
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 	"github.com/harishappana/gpu-inspector/internal/secureexec"
 )
 
 type Manifest struct {
-	Kind                  string   `json:"kind"`
-	Version               string   `json:"version"`
-	MethodVersion         string   `json:"method_version"`
-	Platform              string   `json:"platform"`
-	File                  string   `json:"file"`
-	SHA256                string   `json:"sha256"`
-	Qualified             bool     `json:"qualified"`
-	QualificationEvidence []string `json:"qualification_evidence"`
+	Kind                  string       `json:"kind"`
+	Version               string       `json:"version"`
+	MethodVersion         string       `json:"method_version"`
+	Platform              string       `json:"platform"`
+	File                  string       `json:"file"`
+	SHA256                string       `json:"sha256"`
+	Qualified             bool         `json:"qualified"`
+	QualificationEvidence []string     `json:"qualification_evidence"`
+	Dependencies          []Dependency `json:"dependencies,omitempty"`
 }
 type Binary struct {
 	Path         string
 	Digest       string
 	Qualified    bool
 	temporaryDir string
+	dependencies []Dependency
 }
 
 func (b *Binary) Close() error {
@@ -47,7 +51,14 @@ func (b *Binary) Close() error {
 	return os.RemoveAll(b.temporaryDir)
 }
 func Load(path, manifestPath string, key ed25519.PublicKey, allowUnqualified bool) (*Binary, error) {
-	data, err := bundle.ReadLimited(manifestPath, bundle.MaxDocumentBytes)
+	return LoadContext(context.Background(), path, manifestPath, key, allowUnqualified)
+}
+
+// LoadContext authenticates and snapshots artifacts, checking cancellation
+// between bounded file reads/writes. The caller retains its scan deadline during
+// potentially large CUDA DLL copies; individual OS file calls are not interruptible.
+func LoadContext(ctx context.Context, path, manifestPath string, key ed25519.PublicKey, allowUnqualified bool) (*Binary, error) {
+	data, err := readLimitedContext(ctx, manifestPath, bundle.MaxDocumentBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +70,10 @@ func Load(path, manifestPath string, key ed25519.PublicKey, allowUnqualified boo
 	if err = bundle.Decode(payload, &m); err != nil {
 		return nil, err
 	}
-	if m.Kind != "gri-worker" || m.Version != model.ToolVersion || m.MethodVersion != model.MethodVersion || m.Platform != "linux-amd64" || m.File != filepath.Base(path) || m.File == "." || len(m.SHA256) != 64 {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if m.Kind != "gri-worker" || m.Version != model.ToolVersion || m.MethodVersion != model.MethodVersion || m.Platform != runtime.GOOS+"-"+runtime.GOARCH || m.File != filepath.Base(path) || m.File == "." || len(m.SHA256) != 64 {
 		return nil, errors.New("worker manifest version, platform or filename mismatch")
 	}
 	if m.Qualified && len(m.QualificationEvidence) == 0 {
@@ -71,7 +85,7 @@ func Load(path, manifestPath string, key ed25519.PublicKey, allowUnqualified boo
 	if !qualified && !allowUnqualified {
 		return nil, errors.New("worker is unqualified; acceptance testing requires explicit --allow-unqualified-worker")
 	}
-	binary, err := bundle.ReadLimited(path, 128<<20)
+	binary, err := readLimitedContext(ctx, path, 128<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -80,18 +94,47 @@ func Load(path, manifestPath string, key ed25519.PublicKey, allowUnqualified boo
 	if digest != m.SHA256 {
 		return nil, errors.New("worker executable digest mismatch")
 	}
-	// Execute exactly verified bytes. Adjacent/$ORIGIN libraries are deliberately
-	// not copied; a compatible system CUDA/cuBLAS loader configuration is required.
-	tmp, err := os.MkdirTemp("", "gri-worker-")
+	if err = validateDependencies(m.Dependencies, m.Platform); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Execute exactly verified bytes, with authenticated Windows runtime DLLs
+	// beside the executable. No inherited CUDA or user PATH is used for loading.
+	tmp, err := privatefs.MkdirTemp("", "gri-worker-")
 	if err != nil {
 		return nil, err
 	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.RemoveAll(tmp)
+		}
+	}()
 	snapshot := filepath.Join(tmp, "gri-cuda-worker")
-	if err = bundle.WriteNew(snapshot, binary, 0700); err != nil {
-		_ = os.RemoveAll(tmp)
+	if runtime.GOOS == "windows" {
+		snapshot += ".exe"
+	}
+	if err = writeNewContext(ctx, snapshot, binary, 0700); err != nil {
 		return nil, err
 	}
-	return &Binary{Path: snapshot, Digest: digest, Qualified: qualified, temporaryDir: tmp}, nil
+	var dependencyBytes int64
+	for _, dependency := range m.Dependencies {
+		n, copyErr := snapshotDependencyContext(ctx, filepath.Join(filepath.Dir(path), dependency.File), filepath.Join(tmp, dependency.File), dependency)
+		dependencyBytes += n
+		if copyErr != nil || dependencyBytes > MaxDependencyTotalBytes {
+			if copyErr != nil {
+				return nil, copyErr
+			}
+			return nil, errors.New("worker dependencies exceed aggregate size limit")
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	complete = true
+	return &Binary{Path: snapshot, Digest: digest, Qualified: qualified, temporaryDir: tmp, dependencies: append([]Dependency(nil), m.Dependencies...)}, nil
 }
 
 type Metric struct {
@@ -203,6 +246,9 @@ func (r Result) Validate(device, method string, elapsed time.Duration) error {
 	contract, ok := metricContracts[r.Method]
 	if !ok {
 		return errors.New("unknown worker method")
+	}
+	if r.Method == "hbm_copy" && r.Conditions["compute_capability"] == "12.0" {
+		contract[0] = "device_memory_effective_copy_bandwidth"
 	}
 	if r.Correctness.Synthetic {
 		return errors.New("synthetic worker output cannot enter a live scan")
@@ -452,7 +498,13 @@ func (b *Binary) Run(ctx context.Context, q Request) ([]model.Observation, bool)
 	call, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	args := []string{"--device", q.Device.UUID, "--method", q.Method, "--budget-ms", strconv.FormatInt(budget.Milliseconds(), 10), "--memory-mib", strconv.Itoa(q.MemoryMiB), "--seed", strconv.FormatUint(q.Seed, 10), "--tier", q.Tier}
-	process := secureexec.Run(call, b.Path, args, map[string]string{"CUDA_VISIBLE_DEVICES": q.Device.UUID, "NVIDIA_VISIBLE_DEVICES": q.Device.UUID}, 2<<20)
+	environment := map[string]string{"CUDA_VISIBLE_DEVICES": q.Device.UUID, "NVIDIA_VISIBLE_DEVICES": q.Device.UUID}
+	var process secureexec.Result
+	if b.temporaryDir != "" {
+		process = secureexec.RunPrivate(call, b.Path, args, environment, 2<<20, b.temporaryDir)
+	} else {
+		process = secureexec.Run(call, b.Path, args, environment, 2<<20)
+	}
 	if call.Err() != nil {
 		return fail(model.TimeBudgetExhausted, "Worker deadline/cancellation ended this test; device failure is not established")
 	}
@@ -489,6 +541,13 @@ func (b *Binary) observations(q Request, base model.Observation, r Result, durat
 	base.Conditions["virtualization_mode"] = q.Device.VirtualizationMode
 	qualified := b.Qualified && !strings.Contains(r.WorkerVersion, "-dev") && r.Conditions["worker_qualification"] != "pending_real_gpu_acceptance"
 	base.Conditions["worker_qualified"] = qualified
+	if len(b.dependencies) > 0 {
+		dependencyDigests := make(map[string]string, len(b.dependencies))
+		for _, dependency := range b.dependencies {
+			dependencyDigests[strings.ToLower(dependency.File)] = dependency.SHA256
+		}
+		base.Conditions["runtime_dependency_sha256"] = dependencyDigests
+	}
 	base.Status = map[string]model.Status{"ok": model.Pass, "unsupported": model.Unsupported, "blocked": model.NotTested, "test_error": model.ToolError, "mismatch": model.Fail, "budget_exhausted": model.TimeBudgetExhausted}[r.Status]
 	base.Message = fmt.Sprintf("%s: %s; %d checked values; %d observed mismatches (lower bound=%t); reproducible=%t", q.Method, r.Status, r.Correctness.CheckedValues, r.Correctness.MismatchCount, r.Correctness.CountIsLowerBound, r.Correctness.Reproducible)
 	if r.Metric != nil {

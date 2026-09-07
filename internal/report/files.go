@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/harishappana/gpu-inspector/internal/bundle"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 const MaxArtifactBytes int64 = 16 << 20
@@ -40,20 +41,7 @@ func digest(data []byte) string {
 }
 
 func privateDir(dir string) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("report directory must be a real directory")
-	}
-	if info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("report directory %q must be private (0700)", dir)
-	}
-	return nil
+	return privatefs.MkdirAll(dir)
 }
 
 // publish writes a complete file and atomically creates its final name without
@@ -62,14 +50,12 @@ func publish(dir, name string, data []byte) error {
 	if int64(len(data)) > MaxArtifactBytes {
 		return fmt.Errorf("artifact %s exceeds size limit", name)
 	}
-	tmp, err := os.CreateTemp(dir, ".gri-write-*")
+	tmp, err := privatefs.CreateTemp(dir, ".gri-write-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if err = tmp.Chmod(0600); err == nil {
-		_, err = tmp.Write(data)
-	}
+	_, err = tmp.Write(data)
 	if err == nil {
 		err = tmp.Sync()
 	}
@@ -87,15 +73,15 @@ func publish(dir, name string, data []byte) error {
 }
 
 func readPrivateFile(path string) ([]byte, error) {
+	if err := privatefs.CheckFile(path); err != nil {
+		return nil, err
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("artifact %q must be a regular file", path)
-	}
-	if info.Mode().Perm()&0077 != 0 {
-		return nil, fmt.Errorf("artifact %q must be private (0600)", path)
 	}
 	if info.Size() > MaxArtifactBytes {
 		return nil, fmt.Errorf("artifact %q exceeds size limit", path)
@@ -149,12 +135,8 @@ func validArtifactName(name string) bool {
 // Verify checks every indexed artifact, rejects unexpected artifacts and path
 // traversal, and checks private permissions. It does not authenticate the host.
 func Verify(dir string) error {
-	info, err := os.Lstat(dir)
-	if err != nil {
+	if err := privatefs.CheckDir(dir); err != nil {
 		return err
-	}
-	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
-		return fmt.Errorf("evidence directory is not private")
 	}
 	data, err := readPrivateFile(filepath.Join(dir, "evidence-index.json"))
 	if err != nil {

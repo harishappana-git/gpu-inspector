@@ -1,4 +1,4 @@
-//go:build !linux || !cgo
+//go:build !windows && (!linux || !cgo)
 
 package collect
 

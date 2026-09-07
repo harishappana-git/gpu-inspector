@@ -198,7 +198,7 @@
   {
     "id": "C05",
     "stage": "Q",
-    "name": "HBM bandwidth",
+    "name": "Device-memory bandwidth",
     "method": "Large-buffer streaming or qualified copy test exceeding cache scale.",
     "boundary": "Effective bandwidth with exact read/write byte definition."
   },

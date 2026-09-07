@@ -32,6 +32,7 @@ type Options struct {
 	Seed                                                  uint64
 	WorkerPath, WorkerManifest, WorkerPublicKey           string
 	AllowUnqualifiedWorker                                bool
+	AllowBusy                                             bool
 	ReferencePath, ReferencePublicKey                     string
 	Price                                                 *model.Price
 	MaxTemperatureC                                       float64
@@ -223,14 +224,16 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 			defer lock.close()
 		}
 	}
-	if active && (d.MIGMode != "disabled" || (d.VirtualizationMode != "none" && d.VirtualizationMode != "passthrough")) {
-		block(model.Unsupported, "Active worker requires a confirmed full GPU with MIG disabled and a supported visible virtualization mode.", false)
+	if active && !fullDeviceMode(d) {
+		block(model.Unsupported, "Active worker requires a confirmed full GPU with disabled or known-absent MIG capability and a supported visible virtualization mode.", false)
 		j.add(baseObservation("A06", "guard.active-scope", blockedStatus, workerReason))
 	}
 	if active {
 		if idle, reason := Idle(pre); !idle {
-			block(model.Contaminated, reason, false)
-			j.add(baseObservation("I01", "scheduler.idle", blockedStatus, reason))
+			if !o.AllowBusy || !busyOverrideEligible(pre) {
+				block(model.Contaminated, reason, false)
+			}
+			j.add(busyObservation(reason, o.AllowBusy && active))
 		}
 	}
 	if active {
@@ -239,11 +242,11 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 			j.add(baseObservation("B12", "scheduler.safety", model.Warning, reason))
 		}
 	}
-	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+	if (runtime.GOOS != "linux" && runtime.GOOS != "windows") || runtime.GOARCH != "amd64" {
 		if active {
 			block(model.Unsupported, "CUDA execution is unsupported on this operating system/architecture.", false)
 		}
-		j.add(baseObservation("H03", "scheduler.platform", model.Unsupported, "This development CUDA worker targets Linux x86-64; the current host can produce a degraded context report. Real-GPU qualification remains pending."))
+		j.add(baseObservation("H03", "scheduler.platform", model.Unsupported, "This development CUDA worker targets Linux/Windows x86-64; the current host can produce a degraded context report. Real-GPU qualification remains pending."))
 	}
 	if active {
 		if o.WorkerPath == "" || o.WorkerManifest == "" || o.WorkerPublicKey == "" {
@@ -251,7 +254,7 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 		} else {
 			key, keyErr := bundle.LoadPublicKey(o.WorkerPublicKey)
 			if keyErr == nil {
-				binary, keyErr = worker.Load(o.WorkerPath, o.WorkerManifest, key, o.AllowUnqualifiedWorker)
+				binary, keyErr = worker.LoadContext(ctx, o.WorkerPath, o.WorkerManifest, key, o.AllowUnqualifiedWorker)
 			}
 			if keyErr != nil {
 				block(model.ToolError, "Worker artifact rejected: "+keyErr.Error(), false)
@@ -309,8 +312,11 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 				break
 			}
 			if idle, reason := Idle(currentPre); !idle {
-				j.add(baseObservation("I01", "scheduler.idle", model.Contaminated, reason))
-				break
+				allowed := o.AllowBusy && busyOverrideEligible(currentPre)
+				j.add(busyObservation(reason, allowed))
+				if !allowed {
+					break
+				}
 			}
 			remaining := time.Until(start.Add(o.Budget - reserve))
 			budget := remaining / time.Duration(len(methods)-i)
@@ -360,6 +366,9 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 				}
 			}()
 			observations, stop := plugin.Execute(testctx, worker.Request{Device: d, Method: method, Tier: o.Tier, Budget: budget, MemoryMiB: o.MemoryMiB, Seed: o.Seed})
+			if o.AllowBusy {
+				markBusyResults(observations, method)
+			}
 			stopTest()
 			<-done
 			j.add(observations...)
@@ -462,6 +471,29 @@ func RunWithBackend(parent context.Context, o Options, b Backend) (model.Report,
 		return r, fmt.Errorf("durable report readback failed: %w", err)
 	}
 	return stored, nil
+}
+
+func markBusyResults(observations []model.Observation, method string) {
+	for index := range observations {
+		o := &observations[index]
+		if o.Conditions == nil {
+			o.Conditions = map[string]any{}
+		}
+		o.Conditions["busy_gpu_opt_in"] = true
+		if o.MethodID == method && o.Status == model.Pass {
+			o.Status = model.Contaminated
+			o.Message += " Busy-GPU testing was explicitly enabled; performance is ineligible for calibration. Numerical validation remains separately recorded."
+		}
+	}
+}
+
+func busyObservation(reason string, allowed bool) model.Observation {
+	o := baseObservation("I01", "scheduler.idle", model.Contaminated, reason)
+	o.Conditions = map[string]any{"busy_gpu_opt_in": allowed}
+	if allowed {
+		o.Message += " Explicit --allow-busy permits bounded testing; results cannot establish idle performance."
+	}
+	return o
 }
 
 func validCurrency(currency string) bool {

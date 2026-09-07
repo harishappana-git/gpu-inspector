@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/harishappana/gpu-inspector/internal/model"
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
 
 // Keep raw evidence below the 16 MiB report artifact cap, with separate room
@@ -37,10 +38,10 @@ func newJournal(dir, scanID string) (*journal, error) {
 	if err := os.MkdirAll(filepath.Dir(dir), 0700); err != nil {
 		return nil, err
 	}
-	if err := os.Mkdir(dir, 0700); err != nil {
+	if err := privatefs.Mkdir(dir); err != nil {
 		return nil, fmt.Errorf("scan output must be a new directory: %w", err)
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "evidence.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	f, err := privatefs.OpenFile(filepath.Join(dir, "evidence.jsonl"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, err
 	}

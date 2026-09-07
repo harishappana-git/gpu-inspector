@@ -10,6 +10,9 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
+	"github.com/harishappana/gpu-inspector/internal/processutil"
 )
 
 type Result struct {
@@ -40,12 +43,29 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 }
 
 func Run(ctx context.Context, executable string, args []string, env map[string]string, limit int) Result {
+	return run(ctx, executable, args, env, limit, "")
+}
+
+// RunPrivate confines the child working directory and temporary files to an
+// authenticated private worker snapshot. No loader paths are inherited.
+func RunPrivate(ctx context.Context, executable string, args []string, env map[string]string, limit int, dir string) Result {
+	if err := privatefs.CheckDir(dir); err != nil {
+		return Result{Err: err, ExitCode: -1}
+	}
+	return run(ctx, executable, args, env, limit, dir)
+}
+
+func run(ctx context.Context, executable string, args []string, env map[string]string, limit int, dir string) Result {
 	start := time.Now()
 	if limit <= 0 {
 		limit = 1 << 20
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
-	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "LANG=C", "LC_ALL=C"}
+	cmd.Env = childEnvironment()
+	if dir != "" {
+		cmd.Dir = dir
+		cmd.Env = append(cmd.Env, "TEMP="+dir, "TMP="+dir, "TMPDIR="+dir)
+	}
 	keys := make([]string, 0, len(env))
 	for key := range env {
 		keys = append(keys, key)
@@ -60,9 +80,8 @@ func Run(ctx context.Context, executable string, args []string, env map[string]s
 	stderr := &cappedBuffer{limit: limit}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	prepare(cmd)
 	cmd.WaitDelay = 250 * time.Millisecond
-	err := cmd.Run()
+	err := processutil.Run(cmd)
 	code := 0
 	if err != nil {
 		code = -1

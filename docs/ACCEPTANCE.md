@@ -4,7 +4,7 @@ This is a procedure for **future authorized qualification**, not a record that i
 
 ## 1. Define and retain the exact scope
 
-Use an operator-controlled or explicitly authorized Linux x86-64 H100 PCIe allocation. Record the exact full GPU UUID, observed PCI identity, form factor/memory SKU, MIG/virtualization state, visible-device mapping, driver/runtime/cuBLAS/toolkit/compiler versions, host/container limits and method version. Keep raw identifiers in private local evidence; share reviewed redacted exports. Do not label SXM, NVL, a MIG slice or a different driver/method stack as an exact PCIe reference match.
+Use an operator-controlled or explicitly authorized Linux x86-64 H100 PCIe allocation for H100 qualification. Native Windows x64 / RTX 5080 validation can exercise the same implemented workflow first; retain it as a separate hardware/platform campaign. Record the exact full GPU UUID, observed PCI identity, form factor/memory SKU, MIG/virtualization state, visible-device mapping, driver/runtime/cuBLAS/toolkit/compiler versions, host/container limits and method version. Windows runs additionally record WDDM/TCC mode and desktop contention. Keep raw identifiers in private local evidence; share reviewed redacted exports. Do not label RTX, SXM, NVL, a MIG slice or a different driver/method stack as an exact H100 PCIe reference match.
 
 Pre-register the checks, budget, memory cap, workspace, expected conditions and stop criteria. Define who may approve provider maintenance. Protect existing workload data and record its persistence separately. No test should reset a GPU, clear counters, alter firmware/power/link policy, stress an unselected device, drop global caches, read another tenant's data or terminate the rental.
 
@@ -16,6 +16,8 @@ mkdir -m 700 ./acceptance
 ```
 
 Retain the source revision, command configuration, installation/build interval, scan interval, actual rental cost assumptions, failures and partial results. A rerun creates new evidence rather than erasing the first attempt.
+
+On Windows, let `gri` create each new evidence/key directory with a protected current-user-only DACL. `New-Item` or numeric mode bits do not establish Windows privacy. Keep the local parent directory under the operator's control, and retain logs privately with the evidence.
 
 ## 2. Reproduce software checks on the trusted build host
 
@@ -38,13 +40,25 @@ CGO_ENABLED=1 go build -trimpath -o ./bin/gri-linux-native ./cmd/gri
 
 No NVML headers or GPU are needed to compile this adapter, so compilation alone does not test its actual runtime ABI. Repeat collector tests against the pinned NVIDIA runtime on the qualification machine. Test the same final binary and image that will be distributed.
 
-Build CUDA only on the pinned Linux CUDA environment:
+Build the Linux worker on the pinned Linux CUDA environment:
 
 ```sh
 make worker-cuda CUDA_ROOT=/path/to/pinned/cuda
 ```
 
-CMake currently requests CUDA Toolkit 12.0+ and SM90, links CUDA runtime and cuBLAS, and uses a C++17 source contract. These are build requirements, not a validated compatibility matrix. Record the actual dependency versions and license/redistribution review. The launcher snapshots the executable, not adjacent libraries; qualify system-loader or absolute-RPATH resolution after relocation. Do not assume a build-tree binary and an installed binary load the same dependencies.
+CMake requests CUDA Toolkit 12.0+ for SM90 and CUDA Toolkit 12.8+ for SM120, links CUDA runtime and cuBLAS, and uses a C++17 source contract. These are build requirements, not a validated compatibility matrix. Record actual dependency versions and license/redistribution review. On Linux the launcher snapshots the executable, not adjacent shared libraries; qualify system-loader or absolute-RPATH resolution after relocation. On Windows it snapshots explicitly signed, allowlisted adjacent runtime DLLs as well. Do not assume a build-tree binary and an installed binary load the same dependencies.
+
+For native Windows, run these commands in an x64 Visual Studio developer PowerShell with Go, CMake and a toolkit-supported compiler available:
+
+```powershell
+go version
+go test ./...
+go vet ./...
+./scripts/build-windows.ps1 -CPUOnly
+./scripts/build-windows.ps1 -CudaRoot $env:CUDA_PATH
+```
+
+The script builds `bin/gri.exe`, configures a Release worker build under `build/worker-windows`, runs the CPU known-answer harness, and builds the SM120 worker unless `-CPUOnly` is selected. `-Architectures '90-real;120-real;120-virtual'` requests a dual-architecture build with a supporting toolkit. Windows `go test -race ./...` additionally requires a compatible GCC C toolchain and `CGO_ENABLED=1`; MSVC is used for the C++/CUDA harness, not as Go's GCC substitute. Retain actual command results; a missing race toolchain leaves that check incomplete.
 
 ## 3. Sign development artifacts without implying qualification
 
@@ -62,6 +76,25 @@ Generate development keys **on the trusted build machine**. Keep the private key
 ```
 
 These commands create an **unqualified development** manifest and signature over actual bytes. A self-generated key tests the signing workflow; it is not an official release endorsement. Verify the public key through a trusted channel before transferring artifacts. No provider account credential is needed by the scanner, and no private key should be passed as a CLI argument value or installed on an untrusted rental.
+
+For Windows, use `gri.exe` and include each staged CUDA runtime dependency. The following assumes CUDA 12 DLL names; use the exact names and bytes required by the selected toolkit, staged next to the executable before manifest generation:
+
+```powershell
+./bin/gri.exe keys generate --output ./acceptance/windows-development-keys
+./bin/gri.exe manifest worker `
+  --platform windows-amd64 `
+  --binary ./build/worker-windows/gri-cuda-worker.exe `
+  --dependency ./build/worker-windows/cudart64_12.dll `
+  --dependency ./build/worker-windows/cublas64_12.dll `
+  --dependency ./build/worker-windows/cublasLt64_12.dll `
+  --output ./acceptance/windows-worker-manifest.json
+./bin/gri.exe sign `
+  --input ./acceptance/windows-worker-manifest.json `
+  --key ./acceptance/windows-development-keys/private.pem `
+  --output ./acceptance/windows-worker-envelope.json
+```
+
+The platform defaults to the current host; set `--platform` explicitly for a cross-built artifact. Do not include GPU-driver or arbitrary user DLLs in the signed dependency list. Test missing, renamed and modified dependencies and verify admission fails before any GPU work. Dependency authenticity does not independently qualify the worker's methods.
 
 Do not edit `qualified` to make the development build pass admission. The current loader explicitly refuses promoting this development version through a manifest flag. Qualification requires reviewed evidence and the corresponding supported release process, including final executable/dependency validation and key custody.
 
@@ -99,6 +132,22 @@ The UUID and paths below are placeholders. Use the verified allocation and actua
 ```
 
 This explicitly permits development measurements while preserving unqualified status. No calibrated acceptance score should result, even if a numerical method passes. Retain exact checked bytes, passes, shapes, math modes, direction, units, sample timing/spread, mismatch counts and limitations. A first numerical mismatch is an observed method failure, not a reproduced physical defect. Stop active work, preserve evidence and use only the provider-supported confirmation procedure.
+
+The Windows RTX equivalent uses the local development artifacts and exact RTX SKU:
+
+```powershell
+./bin/gri.exe scan `
+  --device GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee `
+  --expected-sku rtx-5080-16gb --profile general --tier quick `
+  --budget-seconds 120 --memory-mib 256 --seed 42 `
+  --worker ./build/worker-windows/gri-cuda-worker.exe `
+  --worker-manifest ./acceptance/windows-worker-envelope.json `
+  --worker-public-key ./acceptance/windows-development-keys/public.pem `
+  --allow-unqualified-worker `
+  --output ./acceptance/rtx-quick-001
+```
+
+Replace the placeholder UUID with the selected card. Busy WDDM desktop processes can prevent the idle guard from admitting active work. An operator explicitly accepting desktop contention may add `--allow-busy` for local development validation; resulting primary performance evidence is `CONTAMINATED`, with separate correctness evidence retained. This does not establish idle performance or permit calibrated scoring. Do not alter Windows TDR, power limits, clocks or driver mode to obtain a passing result. Repeat with `--tier standard` and an appropriate budget to exercise every existing method; verify completed method IDs instead of inferring execution from the tier name.
 
 Expect scan exit code **3** while the report is inconclusive. Codes `0`, `2`, `3` and `130` respectively represent keep/caveats, do-not-start, inconclusive and cancellation with partial evidence; `1` is an operational/usage error. Record both the code and successful `gri verify` result. Do not suppress every nonzero code in an automated acceptance script. Demo/replay return `0` when report generation succeeds and do not encode their verdict in the exit status.
 

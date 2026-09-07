@@ -20,6 +20,21 @@ func invoke(t *testing.T, args ...string) (int, string, string) {
 	code := run(context.Background(), args, &out, &err)
 	return code, out.String(), err.String()
 }
+
+func TestManifestRejectsExcessDependenciesBeforePublication(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "manifest.json")
+	args := []string{"manifest", "worker", "--platform", "windows-amd64", "--binary", "unread-worker.exe", "--output", dest}
+	for i := 0; i <= worker.MaxDependencies; i++ {
+		args = append(args, "--dependency", "unread.dll")
+	}
+	code, _, stderr := invoke(t, args...)
+	if code != 1 || !strings.Contains(stderr, "too many worker runtime dependencies") {
+		t.Fatalf("oversized manifest not rejected early: %d %s", code, stderr)
+	}
+	if _, err := os.Stat(dest); !os.IsNotExist(err) {
+		t.Fatal("invalid manifest was published")
+	}
+}
 func TestDemoVerifiedExportReplayAndCleanup(t *testing.T) {
 	root := t.TempDir()
 	original := filepath.Join(root, "fixture")

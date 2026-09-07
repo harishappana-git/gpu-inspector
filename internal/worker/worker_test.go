@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -235,7 +236,7 @@ func TestDevelopmentWorkerCannotAcquireQualificationBySignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(bytes)
-	manifest := Manifest{Kind: "gri-worker", Version: model.ToolVersion, MethodVersion: model.MethodVersion, Platform: "linux-amd64", File: "worker", SHA256: hex.EncodeToString(sum[:]), Qualified: true, QualificationEvidence: []string{"synthetic test assertion"}}
+	manifest := Manifest{Kind: "gri-worker", Version: model.ToolVersion, MethodVersion: model.MethodVersion, Platform: runtime.GOOS + "-" + runtime.GOARCH, File: "worker", SHA256: hex.EncodeToString(sum[:]), Qualified: true, QualificationEvidence: []string{"synthetic test assertion"}}
 	payload, _ := json.Marshal(manifest)
 	envelope, err := bundle.Sign(payload, priv)
 	if err != nil {
@@ -356,18 +357,7 @@ func TestRunProtocolFixtureWithSanitizedEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This process is a deliberately synthetic transport fixture. It has no CUDA
-	// library or GPU call. Its sleep only makes declared timing internally valid.
-	script := "#!/bin/sh\n" +
-		"[ \"$CUDA_VISIBLE_DEVICES\" = \"" + testUUID + "\" ] || exit 9\n" +
-		"[ \"$NVIDIA_VISIBLE_DEVICES\" = \"" + testUUID + "\" ] || exit 9\n" +
-		"[ \"${NVIDIA_TF32_OVERRIDE+x}\" != x ] || exit 9\n" +
-		"[ \"${LD_PRELOAD+x}\" != x ] || exit 9\n" +
-		"sleep 0.12\ncat <<'GRI_SYNTHETIC_PROTOCOL'\n" + string(data) + "\nGRI_SYNTHETIC_PROTOCOL\n"
-	path := filepath.Join(t.TempDir(), "protocol-fixture")
-	if err = os.WriteFile(path, []byte(script), 0700); err != nil {
-		t.Fatal(err)
-	}
+	path := nativeProtocolFixture(t, data)
 	t.Setenv("NVIDIA_TF32_OVERRIDE", "0")
 	t.Setenv("LD_PRELOAD", "must-not-be-inherited")
 	q := request("h2d", "quick")

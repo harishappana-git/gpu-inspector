@@ -1,5 +1,6 @@
 #include "known_answer.hpp"
 #include "json.hpp"
+#include "device_support.hpp"
 #include <iostream>
 #include <limits>
 #include <cstring>
@@ -11,6 +12,14 @@ static void require(bool condition, const char* message) {
 
 int main() {
   try {
+    require(gri::supported_architecture(9, 0), "Hopper support regressed");
+    require(gri::supported_architecture(12, 0), "Blackwell support missing");
+    require(!gri::supported_architecture(10, 0) && !gri::supported_architecture(12, 1), "untested architecture accepted");
+    require(gri::architecture_family(12, 0) == "blackwell_sm120", "wrong architecture family");
+    require(gri::memory_technology("NVIDIA GeForce RTX 5080") == "GDDR7", "RTX memory mislabeled");
+    require(gri::memory_technology("NVIDIA H100 PCIe") == "HBM", "H100 memory label regressed");
+    require(gri::memory_technology("different SM120 product") == "unknown", "memory technology invented");
+    require(std::string(gri::memory_bandwidth_metric(12)) == "device_memory_effective_copy_bandwidth", "RTX bandwidth mislabeled HBM");
     constexpr std::size_t count = 4099;
     std::vector<uint32_t> buffer(count);
     for (auto seed : {0U, 1U, 0xffffffffU}) {

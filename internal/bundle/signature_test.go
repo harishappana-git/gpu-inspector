@@ -6,9 +6,56 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/harishappana/gpu-inspector/internal/privatefs"
 )
+
+func TestGeneratedKeysPrivateLoadAndRoundtrip(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+	if err := GenerateKeys(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := privatefs.CheckDir(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"private.pem", "public.pem"} {
+		if err := privatefs.CheckFile(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	priv, err := LoadPrivateKey(filepath.Join(dir, "private.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := LoadPublicKey(filepath.Join(dir, "public.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"kind":"local-validation"}`)
+	signed, err := Sign(payload, priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actual, err := Verify(signed, pub)
+	if err != nil || !bytes.Equal(actual, payload) {
+		t.Fatalf("key roundtrip failed: %v", err)
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "private.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := GenerateKeys(dir); err == nil {
+		t.Fatal("existing keys overwritten")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "private.pem"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("retained private key changed")
+	}
+}
 
 func TestSignature(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)

@@ -14,15 +14,16 @@ import (
 )
 
 var (
-	gpuIdentifier = regexp.MustCompile(`(?i)\b(?:GPU|MIG)-[a-z0-9][a-z0-9/-]*`)
-	pciIdentifier = regexp.MustCompile(`(?i)\b[0-9a-f]{4,8}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]\b`)
-	ipv4          = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
-	absolutePath  = regexp.MustCompile(`(^|[\s"'(=])(?:/[a-zA-Z0-9_.~+-][^\s"'<>),;]*|[a-zA-Z]:\\[^\s"'<>),;]*)`)
-	credential    = regexp.MustCompile(`(?i)\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|token|authorization|cookie)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
-	bearer        = regexp.MustCompile(`(?i)\bBearer\s+[a-z0-9._~+/=-]+`)
-	knownToken    = regexp.MustCompile(`\b(?:AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9_-]{12,}|gh[pousr]_[a-zA-Z0-9]{15,}|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)\b`)
-	privateKey    = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
-	pseudonymous  = regexp.MustCompile(`^redacted-[0-9a-f]{12}$`)
+	gpuIdentifier     = regexp.MustCompile(`(?i)\b(?:GPU|MIG)-[a-z0-9][a-z0-9/-]*`)
+	pciIdentifier     = regexp.MustCompile(`(?i)\b[0-9a-f]{4,8}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]\b`)
+	ipv4              = regexp.MustCompile(`\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b`)
+	absolutePath      = regexp.MustCompile(`(^|[\s"'(=])(?:/[a-zA-Z0-9_.~+-][^\s"'<>),;]*|[a-zA-Z]:[\\/][^\s"'<>),;]*|\\\\[^\s"'<>),;]+)`)
+	quotedWindowsPath = regexp.MustCompile(`"(?:[a-zA-Z]:[\\/]|\\\\)[^"\r\n]*"|'(?:[a-zA-Z]:[\\/]|\\\\)[^'\r\n]*'`)
+	credential        = regexp.MustCompile(`(?i)\b(?:password|passwd|secret|api[_-]?key|access[_-]?token|auth[_-]?token|token|authorization|cookie)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)`)
+	bearer            = regexp.MustCompile(`(?i)\bBearer\s+[a-z0-9._~+/=-]+`)
+	knownToken        = regexp.MustCompile(`\b(?:AKIA[0-9A-Z]{16}|sk-[a-zA-Z0-9_-]{12,}|gh[pousr]_[a-zA-Z0-9]{15,}|eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)\b`)
+	privateKey        = regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`)
+	pseudonymous      = regexp.MustCompile(`^redacted-[0-9a-f]{12}$`)
 )
 
 type redactor struct {
@@ -46,6 +47,15 @@ func identityKey(key string) bool {
 	return strings.Contains(key, "uuid") || strings.Contains(key, "serial") || strings.Contains(key, "pci_address") || strings.Contains(key, "pci_bus") || strings.Contains(key, "hostname") || strings.Contains(key, "instance_id") || strings.Contains(key, "ip_address")
 }
 
+func absoluteWindowsPath(value string) bool {
+	return len(value) >= 3 && ((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z')) && value[1] == ':' && (value[2] == '\\' || value[2] == '/') || strings.HasPrefix(value, `\\`)
+}
+
+func pathKey(key string) bool {
+	key = strings.ToLower(key)
+	return key == "path" || strings.HasSuffix(key, "_path") || key == "workspace" || key == "directory" || strings.HasSuffix(key, "_directory")
+}
+
 func (red *redactor) pseudonym(value string) string {
 	if pseudonymous.MatchString(value) {
 		return value
@@ -66,6 +76,8 @@ func (red *redactor) collect(value any, key string) {
 	case string:
 		if len(v) >= 4 && sensitiveKey(key) {
 			red.replacements[v] = "[redacted]"
+		} else if pathKey(key) && absoluteWindowsPath(v) {
+			red.replacements[v] = "[redacted-path]"
 		} else if v != "" && identityKey(key) {
 			red.replacements[v] = red.pseudonym(v)
 		}
@@ -84,6 +96,7 @@ func (red *redactor) text(value string) string {
 	value = credential.ReplaceAllString(value, "[redacted-credential]")
 	value = bearer.ReplaceAllString(value, "[redacted-credential]")
 	value = knownToken.ReplaceAllString(value, "[redacted-credential]")
+	value = quotedWindowsPath.ReplaceAllString(value, "[redacted-path]")
 	value = gpuIdentifier.ReplaceAllStringFunc(value, red.pseudonym)
 	value = pciIdentifier.ReplaceAllStringFunc(value, red.pseudonym)
 	value = ipv4.ReplaceAllStringFunc(value, func(s string) string {
